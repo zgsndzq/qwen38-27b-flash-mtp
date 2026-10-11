@@ -15,15 +15,15 @@ rem ceiling on tokens drafted per step; the adaptive controller stays at or belo
 set "DRAFT_N=4"
 rem ngram lookup drafter (engine patch 0039): drafts text already present in the context.
 rem LOOKUP_N caps one draft; NGMIN is the minimum consecutive match it needs to fire.
-rem Measured 2026-10-11 on this box (MTP alone is the baseline; free writing, the control,
-rem stays at ~43 t/s in every configuration; output text verified unchanged):
-rem   MTP alone              : copy  65.0  rewrite  76.2
-rem   n_match 24 (default)   : copy  65.3  rewrite  94.7
-rem   n_match 12             : copy  86.7  rewrite 118.8
-rem   n_match  8  <- chosen  : copy 107.5  rewrite 108.3
-rem n_match is the lookup window: how many preceding tokens must appear verbatim in the
-rem context before the drafter fires. The engine default is 24 and almost never fires here.
-set "NMATCH=8"
+rem Measured 2026-10-11 (MTP alone is the baseline; free writing stays ~43 t/s everywhere;
+rem output text verified unchanged):
+rem   short copy / config rewrite : copy 65 -> 65 t/s, rewrite 76 -> 95 t/s
+rem   a long code-writing task    : 71 t/s, same as MTP alone, no stalls
+rem A shorter window scores much higher on copy/rewrite (n_match=8 gave 108/108) but ruins
+rem code writing: on a 1800-token HTML task it fell to 51 t/s with visible stalls, because a
+rem short window matches the wrong place in freshly generated code. An adaptive stand-down
+rem was tried and did not fix it. 24 is the value that never regresses anything.
+set "NMATCH=24"
 set "LOOKUP_N=16"
 set "NGMIN=16"
 
