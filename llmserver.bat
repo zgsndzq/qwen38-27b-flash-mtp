@@ -33,6 +33,15 @@ set CUDA_PATH=%~dp0cuda
 
 title Ternary-Bonsai-2-27B-ADA-Q8 :18080
 
+rem ---- kill a leftover server from a previous run ----
+rem A stale instance keeps :18080 bound and its VRAM allocated, so a new start fails
+rem to bind (or the client ends up talking to a half-dead server). /F terminates it.
+tasklist /FI "IMAGENAME eq llama-server.exe" 2>nul | find /I "llama-server.exe" >nul
+if not errorlevel 1 echo [llmserver] killing a leftover instance still holding :18080
+taskkill /F /IM llama-server.exe >nul 2>nul
+rem let Windows release the port and the device memory before we bind again
+ping -n 3 127.0.0.1 >nul
+
 rem ---- application switches, kept out of the upstream recipe ----
 rem vision: 1 mounts the projector for jev-image; 0 leaves it off (measured: only ~43 MiB, not 288)
 rem image-min-tokens: Qwen-VL wants >= 1024 image tokens; below that grounding accuracy drops
