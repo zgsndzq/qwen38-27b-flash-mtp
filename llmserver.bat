@@ -15,9 +15,15 @@ rem ceiling on tokens drafted per step; the adaptive controller stays at or belo
 set "DRAFT_N=4"
 rem ngram lookup drafter (engine patch 0039): drafts text already present in the context.
 rem LOOKUP_N caps one draft; NGMIN is the minimum consecutive match it needs to fire.
-rem Measured 2026-10-11, copy-heavy scenes (free writing is unaffected, ~43 t/s either way):
-rem   rewrite a config file: 76 t/s with MTP alone -> 92 t/s with the lookup drafter.
-rem Lower NGMIN fires more often but accepts less; 16 is the knee (8 and 12 measured slower).
+rem Measured 2026-10-11 on this box (MTP alone is the baseline; free writing, the control,
+rem stays at ~43 t/s in every configuration; output text verified unchanged):
+rem   MTP alone              : copy  65.0  rewrite  76.2
+rem   n_match 24 (default)   : copy  65.3  rewrite  94.7
+rem   n_match 12             : copy  86.7  rewrite 118.8
+rem   n_match  8  <- chosen  : copy 107.5  rewrite 108.3
+rem n_match is the lookup window: how many preceding tokens must appear verbatim in the
+rem context before the drafter fires. The engine default is 24 and almost never fires here.
+set "NMATCH=8"
 set "LOOKUP_N=16"
 set "NGMIN=16"
 
@@ -42,5 +48,6 @@ rem when it has nothing to copy, so free-form text keeps the plain MTP path.
   --reasoning-budget %REBUDGET% ^
   --spec-type ngram-mod,draft-mtp-adaptive --spec-draft-n-max %DRAFT_N% ^
   --spec-lookup-n-max %LOOKUP_N% --spec-ngram-mod-n-min %NGMIN% ^
+  --spec-ngram-mod-n-match %NMATCH% ^
   --alias "Ternary-Bonsai-2-27B" ^
   %VISARG%
