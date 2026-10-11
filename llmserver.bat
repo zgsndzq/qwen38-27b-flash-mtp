@@ -14,7 +14,12 @@ set "REBUDGET=2048"
 rem ceiling on tokens drafted per step; the adaptive controller stays at or below it
 set "DRAFT_N=4"
 rem ngram lookup drafter (engine patch 0039): drafts text already present in the context.
-rem LOOKUP_N caps one draft; NGMIN is the minimum consecutive match it needs to fire.
+rem NMATCH   how many preceding tokens must match before it looks at all.
+rem NGMIN    minimum consecutive match it needs to fire (below ~16 it fires more but accepts less).
+rem NGMAX    ceiling on one ngram draft (--spec-ngram-mod-n-max).
+rem LOOKUP_N cap on one lookup draft; pinned to NGMAX so it can chain as far as the table can.
+rem 2026-10-12 LOOKUP_N 16 -> NGMAX: the cap was tighter than the table itself, so a long
+rem stretch of reused text got cut at 16 even though the drafter could chain 64.
 rem Measured 2026-10-11 (MTP alone is the baseline; free writing stays ~43 t/s everywhere;
 rem output text verified unchanged):
 rem   short copy / config rewrite : copy 65 -> 65 t/s, rewrite 76 -> 95 t/s
@@ -24,7 +29,8 @@ rem code writing: on a 1800-token HTML task it fell to 51 t/s with visible stall
 rem short window matches the wrong place in freshly generated code. An adaptive stand-down
 rem was tried and did not fix it. 24 is the value that never regresses anything.
 set "NMATCH=24"
-set "LOOKUP_N=16"
+set "NGMAX=64"
+set "LOOKUP_N=%NGMAX%"
 set "NGMIN=16"
 
 rem this fork's CUDA runtime
@@ -57,6 +63,6 @@ rem when it has nothing to copy, so free-form text keeps the plain MTP path.
   --reasoning-budget %REBUDGET% ^
   --spec-type ngram-mod,draft-mtp-adaptive --spec-draft-n-max %DRAFT_N% ^
   --spec-lookup-n-max %LOOKUP_N% --spec-ngram-mod-n-min %NGMIN% ^
-  --spec-ngram-mod-n-match %NMATCH% ^
+  --spec-ngram-mod-n-max %NGMAX% --spec-ngram-mod-n-match %NMATCH% ^
   --alias "Ternary-Bonsai-2-27B" ^
   %VISARG%
