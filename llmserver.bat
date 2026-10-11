@@ -13,6 +13,8 @@ rem cap on tokens inside the thinking block, 0 ends it immediately
 set "REBUDGET=2048"
 rem ceiling on tokens drafted per step; the adaptive controller stays at or below it
 set "DRAFT_N=4"
+rem lookup drafter (ngram-mod) draft cap; it drafts text already in the context
+set "LOOKUP_N=32"
 
 rem this fork's CUDA runtime
 set PATH=%~dp0cuda\bin;%PATH%
@@ -31,6 +33,6 @@ if "%VISION%"=="1" set "VISARG=--mmproj "%~dp0models\mmproj-Qwen3.8-27B-Q8_0.ggu
   --host 127.0.0.1 --port 18080 --parallel 1 -rea off ^
   -c %CTX% -b 4096 -t 8 -ngl 99 -fa on ^
   --reasoning-budget %REBUDGET% ^
-  --spec-type draft-mtp-adaptive --spec-draft-n-max %DRAFT_N% ^
+  --spec-type ngram-mod,draft-mtp-adaptive --spec-draft-n-max %DRAFT_N% --spec-lookup-n-max %LOOKUP_N% ^
   --alias "Ternary-Bonsai-2-27B" ^
   %VISARG%
