@@ -13,6 +13,7 @@
 /trainlib/*/
 
 # --- generated & transient ---
+/tmp/
 __pycache__/
 *.pyc
 *.log
