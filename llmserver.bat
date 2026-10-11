@@ -21,10 +21,11 @@ set CUDA_PATH=%~dp0cuda
 title Ternary-Bonsai-2-27B-ADA-Q8 :18080
 
 rem ---- application switches, kept out of the upstream recipe ----
-rem vision: 1 mounts the projector for jev-image, 0 leaves it off (saves about 288 MiB)
+rem vision: 1 mounts the projector for jev-image; 0 leaves it off (measured: only ~43 MiB, not 288)
+rem image-min-tokens: Qwen-VL wants >= 1024 image tokens; below that grounding accuracy drops
 set "VISION=1"
 set "VISARG="
-if "%VISION%"=="1" set "VISARG=--mmproj "%~dp0models\mmproj-Qwen3.8-27B-Q8_0.gguf""
+if "%VISION%"=="1" set "VISARG=--mmproj "%~dp0models\mmproj-Qwen3.8-27B-Q8_0.gguf" --image-min-tokens 1024"
 "%~dp0bin\llama-server.exe" -m "%~dp0models\%MODEL%" ^
   --features-file "%~dp0features.ini" ^
   --host 127.0.0.1 --port 18080 --parallel 1 -rea off ^
