@@ -13,10 +13,13 @@ rem cap on tokens inside the thinking block, 0 ends it immediately
 set "REBUDGET=2048"
 rem ceiling on tokens drafted per step; the adaptive controller stays at or below it
 set "DRAFT_N=4"
-rem Optional: ngram lookup drafter (engine patch 0039). Kept OFF: measured as a net loss
-rem on 2026-10-11 - free generation 45 t/s (no gain over MTP alone), copy-the-input
-rem 16.8 t/s vs 55.4 t/s with MTP alone. Enable only for copy-heavy work.
-rem set "LOOKUP_N=32"
+rem ngram lookup drafter (engine patch 0039): drafts text already present in the context.
+rem LOOKUP_N caps one draft; NGMIN is the minimum consecutive match it needs to fire.
+rem Measured 2026-10-11, copy-heavy scenes (free writing is unaffected, ~43 t/s either way):
+rem   rewrite a config file: 76 t/s with MTP alone -> 92 t/s with the lookup drafter.
+rem Lower NGMIN fires more often but accepts less; 16 is the knee (8 and 12 measured slower).
+set "LOOKUP_N=16"
+set "NGMIN=16"
 
 rem this fork's CUDA runtime
 set PATH=%~dp0cuda\bin;%PATH%
@@ -30,14 +33,14 @@ rem image-min-tokens: Qwen-VL wants >= 1024 image tokens; below that grounding a
 set "VISION=1"
 set "VISARG="
 if "%VISION%"=="1" set "VISARG=--mmproj "%~dp0models\mmproj-Qwen3.8-27B-Q8_0.gguf" --image-min-tokens 1024"
-rem speculative decoding: MTP only. To use the lookup drafter, replace the
-rem --spec-type line below with:
-rem   --spec-type ngram-mod,draft-mtp-adaptive --spec-draft-n-max %DRAFT_N% --spec-lookup-n-max 32
+rem speculative decoding: the lookup drafter runs first and falls back to the MTP draft
+rem when it has nothing to copy, so free-form text keeps the plain MTP path.
 "%~dp0bin\llama-server.exe" -m "%~dp0models\%MODEL%" ^
   --features-file "%~dp0features.ini" ^
   --host 127.0.0.1 --port 18080 --parallel 1 -rea off ^
   -c %CTX% -b 4096 -t 8 -ngl 99 -fa on ^
   --reasoning-budget %REBUDGET% ^
-  --spec-type draft-mtp-adaptive --spec-draft-n-max %DRAFT_N% ^
+  --spec-type ngram-mod,draft-mtp-adaptive --spec-draft-n-max %DRAFT_N% ^
+  --spec-lookup-n-max %LOOKUP_N% --spec-ngram-mod-n-min %NGMIN% ^
   --alias "Ternary-Bonsai-2-27B" ^
   %VISARG%
