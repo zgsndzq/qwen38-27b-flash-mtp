@@ -15,7 +15,8 @@ rem ceiling on tokens drafted per step; the adaptive controller stays at or belo
 set "DRAFT_N=4"
 rem ngram lookup drafter (engine patch 0039): drafts text already present in the context.
 rem NMATCH   how many preceding tokens must match before it looks at all.
-rem NGMIN    minimum consecutive match it needs to fire (below ~16 it fires more but accepts less).
+rem NGMIN    minimum consecutive match it needs to fire; keep at 24 or above - a shorter run
+rem          can line up on the wrong place and feed odd drafts.
 rem NGMAX    ceiling on one ngram draft (--spec-ngram-mod-n-max).
 rem LOOKUP_N cap on one lookup draft; pinned to NGMAX so it can chain as far as the table can.
 rem 2026-10-12 LOOKUP_N 16 -> NGMAX: the cap was tighter than the table itself, so a long
@@ -31,7 +32,7 @@ rem was tried and did not fix it. 24 is the value that never regresses anything.
 set "NMATCH=24"
 set "NGMAX=64"
 set "LOOKUP_N=%NGMAX%"
-set "NGMIN=16"
+set "NGMIN=24"
 
 rem this fork's CUDA runtime
 set PATH=%~dp0cuda\bin;%PATH%
