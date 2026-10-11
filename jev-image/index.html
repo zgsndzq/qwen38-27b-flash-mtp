@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Image JEV — 上传一张图，问它</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f6f8fc;
+    --panel:#ffffff;
+    --panel2:#f1f4fa;
+    --sunken:#f7f9fc;
+    --line:#e6ebf3;
+    --line2:#ccd6e4;
+    --fg:#10141c;
+    --dim:#4a5566;
+    --dim2:#5f6b7d;
+    --acc:#2f7fd8;
+    --good:#16a34a;
+    --warn:#b45309;
+    --bad:#dc2626;
+    --r:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%}
+  body{
+    background:
+      radial-gradient(1100px 620px at 8% -14%, #e6f0fd 0%, transparent 58%),
+      radial-gradient(900px 520px at 104% -8%, #eaeffb 0%, transparent 55%),
+      var(--bg);
+    color:var(--fg);
+    font:14.5px/1.55 "Segoe UI","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--acc)}
+  :focus-visible{outline:2px solid rgba(47,127,216,.55);outline-offset:2px}
+
+  /* ------------------------------------------- 顶部：所有操作都在这里（吸顶） */
+  .top{
+    position:sticky; top:0; z-index:30;
+    background:rgba(255,255,255,.93);
+    backdrop-filter:blur(14px) saturate(1.2); -webkit-backdrop-filter:blur(14px) saturate(1.2);
+    border-bottom:1px solid var(--line2);
+    box-shadow:0 1px 0 rgba(16,24,40,.03), 0 10px 26px rgba(16,24,40,.07);
+  }
+  .brand{display:flex;align-items:center;gap:10px;padding:12px 22px 8px}
+  .brand .logo{
+    width:27px;height:27px;border-radius:8px;display:grid;place-items:center;flex:0 0 auto;
+    background:linear-gradient(180deg,#4a9ae8,#2b6fbe);border:1px solid #6aa8e4;
+    color:#fff;font-size:13px;box-shadow:0 3px 10px rgba(47,127,216,.35);
+  }
+  .brand h1{font-size:15.5px;margin:0;letter-spacing:.3px;font-weight:700;color:#0b1220}
+  .brand .sub{font-size:12.5px;color:var(--dim2)}
+  .status{
+    margin-left:auto;display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--dim);
+    border:1px solid var(--line);background:var(--panel2);padding:5px 12px;border-radius:999px;white-space:nowrap;
+  }
+  .status i{width:7px;height:7px;border-radius:50%;background:#9aa6b8;flex:0 0 auto}
+  .status.ok i{background:var(--good);box-shadow:0 0 0 3px rgba(22,163,74,.16)}
+  .status.bad i{background:var(--bad);box-shadow:0 0 0 3px rgba(220,38,38,.16)}
+  .status .nm{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
+  .status .sep{color:#c3cedd}
+
+  .bar{display:flex;gap:10px;align-items:center;padding:0 22px 10px;flex-wrap:wrap}
+
+  .thumb{
+    position:relative;width:52px;height:52px;flex:0 0 auto;padding:0;overflow:hidden;
+    border:1.5px dashed var(--line2);border-radius:12px;background:var(--sunken);color:#64748b;
+    display:grid;place-items:center;cursor:pointer;transition:border-color .15s,background .15s;
+  }
+  .thumb:hover{border-color:#7cb3e8;background:#eef4fd;color:var(--acc)}
+  .thumb img{display:none;width:100%;height:100%;object-fit:cover}
+  .thumb.has{border-style:solid;border-color:var(--line2)}
+  .thumb.has img{display:block}
+  .thumb.has svg{display:none}
+  .thumb.has::after{
+    content:"换图";position:absolute;inset:0;display:grid;place-items:center;
+    font-size:12px;color:#fff;background:rgba(15,23,42,.55);opacity:0;transition:opacity .15s;
+  }
+  .thumb.has:hover::after{opacity:1}
+
+  input[type=text]{
+    background:#fff;color:var(--fg);border:1px solid var(--line2);border-radius:11px;
+    padding:12px 14px;font:14.5px/1.4 inherit;outline:none;transition:border-color .15s,box-shadow .15s;
+  }
+  input[type=text]::placeholder{color:#94a3b8}
+  input[type=text]:focus{border-color:#7cb3e8;box-shadow:0 0 0 3px rgba(47,127,216,.16)}
+  #question{flex:2 1 240px;min-width:200px}
+  #options{flex:1 1 190px;min-width:170px}
+
+  button.primary{
+    flex:0 0 auto;padding:12px 24px;border-radius:11px;font-size:14.5px;font-weight:650;letter-spacing:.5px;
+    color:#fff;cursor:pointer;border:1px solid #5aa2e8;
+    background:linear-gradient(180deg,#3f92e4,#2b6fbe);
+    box-shadow:0 6px 18px rgba(47,127,216,.30);
+    transition:filter .15s,transform .06s;
+  }
+  button.primary:hover{filter:brightness(1.06)}
+  button.primary:active{transform:translateY(1px)}
+  button.primary:disabled{opacity:.6;cursor:default;filter:grayscale(.25);box-shadow:none}
+  button.primary.busy{background:linear-gradient(180deg,#7aa9d4,#6b98c4);border-color:#93bade}
+
+  .helper{padding:0 22px 11px;font-size:12.5px;color:var(--dim2);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .helper b{color:var(--dim);font-weight:650}
+
+  #banner{display:none;margin:0 22px 11px;padding:10px 14px;border-radius:9px;font-size:13px;line-height:1.5}
+  #banner.err{display:block;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c}
+  #banner.warn{display:block;background:#fffbeb;border:1px solid #fde68a;color:#92400e}
+  #banner:empty{display:none}
+
+  /* ------------------------------------------------------------------- 主区 */
+  main{
+    display:grid;grid-template-columns:minmax(300px,42fr) minmax(380px,58fr);
+    gap:18px;padding:18px 22px 40px;align-items:start;max-width:1560px;margin:0 auto;
+  }
+  .card{
+    background:#fff;
+    border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;
+    box-shadow:0 1px 2px rgba(16,24,40,.05), 0 12px 28px rgba(16,24,40,.07);
+  }
+  .res{display:flex;flex-direction:column}
+
+  /* 左：看图 */
+  .drop{
+    position:relative;border:1.5px dashed var(--line2);border-radius:12px;background:var(--sunken);
+    min-height:320px;display:grid;place-items:center;cursor:pointer;overflow:hidden;
+    transition:border-color .15s,background .15s,box-shadow .15s;
+  }
+  .drop:hover{border-color:#7cb3e8;background:#eef4fd;box-shadow:0 0 0 4px rgba(47,127,216,.07)}
+  .drop.hot{border-color:var(--acc);background:#e6f0fd;box-shadow:0 0 0 4px rgba(47,127,216,.16)}
+  .drop.has{border-style:solid;border-color:var(--line);background:#f1f5f9;cursor:default}
+  .drop.has:hover{border-color:var(--line2);box-shadow:none}
+  #preview{display:none;max-width:100%;max-height:min(66vh,620px);object-fit:contain}
+  .drop.has #preview{display:block}
+  .drop.has #drophint{display:none}
+  #drophint{text-align:center;color:var(--dim2);padding:36px 16px;pointer-events:none}
+  #drophint svg{opacity:.55}
+  #drophint b{display:block;margin:14px 0 7px;color:var(--fg);font-size:14.5px;font-weight:650}
+  #drophint span{font-size:12.5px;line-height:1.9}
+  kbd{
+    font:12px/1 "Segoe UI",Consolas,monospace;color:var(--fg);background:#eef2f8;
+    border:1px solid var(--line2);border-bottom-width:2px;border-radius:5px;padding:2px 6px;
+  }
+  .drop .x{
+    position:absolute;top:10px;right:10px;display:none;width:30px;height:30px;padding:0;
+    border-radius:9px;border:1px solid var(--line2);background:rgba(255,255,255,.92);color:#64748b;
+    cursor:pointer;font-size:14px;line-height:1;
+  }
+  .drop.has .x{display:block}
+  .drop .x:hover{color:var(--bad);border-color:#f0a3a3;background:#fff}
+  .imginfo{padding:10px 2px 0;font-size:12px;color:var(--dim2);min-height:18px}
+
+  /* 右：结果 */
+  .reshead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-height:24px}
+  .chip{
+    font-size:12px;letter-spacing:.4px;color:#1d5fa8;background:#eaf3ff;
+    border:1px solid #bcd9f7;border-radius:999px;padding:3px 11px;
+  }
+  .chip:empty{display:none}
+  .chip.warn{color:#92400e;background:#fef3c7;border-color:#fcd34d}
+  .metas{margin-left:auto;display:flex;gap:15px;flex-wrap:wrap;font-size:12px;color:var(--dim2)}
+  .metas b{color:var(--fg);font-variant-numeric:tabular-nums;font-weight:650}
+
+  .hero{
+    margin:14px 0 0;flex:0 0 auto;min-height:150px;display:flex;align-items:center;justify-content:center;
+    background:
+      radial-gradient(560px 220px at 50% 0%, rgba(47,127,216,.07), transparent 70%),
+      var(--sunken);
+    border:1px solid var(--line);border-radius:12px;padding:22px;
+  }
+  .hero.empty{flex-direction:column;gap:14px;min-height:200px;color:var(--dim);font-size:13.5px;text-align:center}
+  .hero.empty svg{opacity:.5}
+  .hero.err{color:#b91c1c;font-size:14px;line-height:1.6;text-align:center}
+  .hero .gen{font-size:19.5px;line-height:1.62;white-space:pre-wrap;word-break:break-word;align-self:stretch}
+  .try{
+    padding:9px 17px;border-radius:10px;cursor:pointer;font-size:13px;
+    color:#1d5fa8;background:#eaf3ff;border:1px solid #bcd9f7;transition:.15s;
+  }
+  .try:hover{background:#dbeaff;border-color:#8fc0ee;color:#14508f}
+  .try:disabled{opacity:.6;cursor:default}
+
+  /* 判据模式不在上面另画"结论"（列表第一行就是答案），
+     所以这里不再需要放大字母用的 .pick 样式。 */
+
+  .cands{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+  .cands:empty{display:none}
+  .cand{display:grid;grid-template-columns:20px minmax(0,168px) minmax(70px,1fr) 54px;
+    gap:10px;align-items:center;font-size:13px}
+  /* 所有候选一律同一形态：字母 | 候选 | 长度条 | 百分比；按概率降序排，
+     最高的那行**不做任何特殊样式**（不放大、不变色、不加粗），一眼看完就行。 */
+  .cand .L{font-weight:750;color:var(--dim2);text-align:center}
+  .cand .t{color:#1e293b;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .cand .bar{position:relative;height:16px;background:#eaeef5;border-radius:5px;overflow:hidden;
+    box-shadow:0 0 0 1px rgba(16,24,40,.05) inset}
+  .cand .bar i{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:5px;
+    background:linear-gradient(90deg,#4a9ae8,#2f7fd8);transition:width .22s ease}
+  .cand .pct{text-align:right;color:#334155;font-variant-numeric:tabular-nums}
+
+  details{margin-top:auto;padding-top:14px;border-top:1px solid var(--line)}
+  details[hidden]{display:none}
+  summary{cursor:pointer;font-size:12.5px;color:var(--dim2);list-style:none;outline:none;margin-top:14px}
+  summary::-webkit-details-marker{display:none}
+  summary:before{content:"▸ "}
+  details[open] summary:before{content:"▾ "}
+  summary:hover{color:var(--fg)}
+  #promptBox{margin-top:10px;background:var(--sunken);border:1px solid var(--line);border-radius:10px;padding:11px 12px;
+    font:12px/1.6 "Cascadia Mono",Consolas,monospace;white-space:pre-wrap;word-break:break-word;
+    max-height:260px;overflow:auto;color:#334155}
+
+  @media (max-width:960px){
+    main{grid-template-columns:1fr}
+    .brand .sub{display:none}
+    #options{flex:1 1 100%}
+    .hero{min-height:140px}
+  }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="brand">
+    <span class="logo">◈</span>
+    <h1>Image JEV</h1>
+    <span class="sub">看一张图 · 给候选 · 出概率</span>
+    <span class="status" id="conn"><i></i>连接中…</span>
+  </div>
+
+  <div class="bar">
+    <button class="thumb" id="thumb" title="选择图片">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+           stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      <img id="thumbImg" alt="">
+    </button>
+
+    <input type="text" id="question" placeholder="这张图里是什么？" autocomplete="off" spellcheck="false">
+    <input type="text" id="options" placeholder="候选（可选）：松鼠, 兔子, 猫, 狗" autocomplete="off" spellcheck="false">
+
+    <button class="primary" id="go">识别</button>
+  </div>
+
+  <div class="helper" id="helper"></div>
+  <div id="banner"></div>
+</div>
+
+<main>
+  <!-- ------------------------------------------------------------ 左：看图 -->
+  <section class="card">
+    <div class="drop" id="drop">
+      <img id="preview" alt="">
+      <div id="drophint">
+        <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor"
+             stroke-width="1.4" stroke-linejoin="round">
+          <rect x="3" y="4.5" width="18" height="15" rx="3"/>
+          <circle cx="8.8" cy="10" r="1.7"/>
+          <path d="M3.6 17.4l4.9-3.9 3.6 2.8 3.2-2.5 4.4 3.6"/>
+        </svg>
+        <b>把图拖到这里</b>
+        <span>点击选择文件 · 或直接 <kbd>Ctrl</kbd>+<kbd>V</kbd> 粘贴截图</span>
+      </div>
+      <button class="x" id="clearImg" title="移除图片">✕</button>
+      <input type="file" id="file" accept="image/*" hidden>
+    </div>
+    <div class="imginfo" id="imginfo"></div>
+  </section>
+
+  <!-- ------------------------------------------------------------ 右：结果 -->
+  <section class="card res">
+    <div class="reshead">
+      <span class="chip" id="rtag"></span>
+      <span class="metas" id="metas"></span>
+    </div>
+
+    <div class="hero empty" id="hero">
+      <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor"
+           stroke-width="1.4" stroke-linejoin="round">
+        <path d="M11.3 3.2l1.7 4.1 4.1 1.7-4.1 1.7-1.7 4.1-1.7-4.1L5.5 9l4.1-1.7z"/>
+        <path d="M18.2 15.4l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>
+      </svg>
+      <span>左边放一张图，上面问一句，点「识别」<br>
+        填了「候选」就走判据：不写文字答案，直接给每个候选的概率</span>
+      <button class="try" id="tryDemo">▷ 用示例图跑一次判据</button>
+    </div>
+
+    <div class="cands" id="cands"></div>
+
+    <details id="promptWrap" hidden>
+      <summary>模型实际看到的内容</summary>
+      <div id="promptBox">—</div>
+    </details>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const LABELS = "ABCDEFGH";
+const MAXEDGE = 1280;
+let IMG = null;                 // {dataUrl, name, w, h, srcW, srcH, bytes}
+
+/* ---------------------------------------------------------------- banner */
+function banner(msg, kind){
+  const b = $("#banner");
+  if(!msg){ b.className = ""; b.textContent = ""; return; }
+  b.className = kind || "err"; b.textContent = msg;
+}
+
+/* ----------------------------------------------------------------- 图片 */
+function showImage(dataUrl, name, bytes, extra){
+  IMG = {dataUrl, name, w: 0, h: 0, srcW: 0, srcH: 0, bytes: bytes || 0};
+  $("#preview").src = dataUrl;
+  $("#thumbImg").src = dataUrl;
+  $("#thumb").classList.add("has");
+  $("#drop").classList.add("has");
+  $("#imginfo").textContent = `${name} · ${((bytes || 0) / 1024).toFixed(0)} KB` + (extra || "");
+}
+
+async function takeFile(file){
+  if(!file || !/^image\//.test(file.type || "")){ banner("这不是图片文件。", "warn"); return; }
+  try{
+    const bmp = await createImageBitmap(file);
+    const srcW = bmp.width, srcH = bmp.height;          // 必须在 close() 之前取出来
+    const k = Math.min(1, MAXEDGE / Math.max(srcW, srcH));
+    const w = Math.max(1, Math.round(srcW * k)), h = Math.max(1, Math.round(srcH * k));
+    const cv = document.createElement("canvas");
+    cv.width = w; cv.height = h;
+    cv.getContext("2d").drawImage(bmp, 0, 0, w, h);
+    if(bmp.close) bmp.close();
+    const dataUrl = cv.toDataURL("image/png");
+    const bytes = Math.round((dataUrl.length - dataUrl.indexOf(",") - 1) * 3 / 4);
+    showImage(dataUrl, file.name || "clipboard.png", bytes,
+              ` · ${srcW}×${srcH}` + (k < 1 ? ` → ${w}×${h}` : ""));
+    banner("");
+    $("#question").focus();
+  }catch(e){ banner("读图失败：" + e.message, "err"); }
+}
+
+function dropImage(){
+  IMG = null;
+  $("#preview").removeAttribute("src");
+  $("#thumbImg").removeAttribute("src");
+  $("#thumb").classList.remove("has");
+  $("#drop").classList.remove("has");
+  $("#imginfo").textContent = "";
+}
+
+$("#thumb").addEventListener("click", () => $("#file").click());
+$("#drop").addEventListener("click", e => {
+  if(e.target.id === "file" || IMG) return;      // 别把 file 的合成点击再转一圈
+  $("#file").click();
+});
+$("#clearImg").addEventListener("click", e => { e.stopPropagation(); dropImage(); });
+$("#file").addEventListener("change", e => { if(e.target.files[0]) takeFile(e.target.files[0]); });
+
+["dragenter","dragover"].forEach(t => $("#drop").addEventListener(t, e => {
+  e.preventDefault(); $("#drop").classList.add("hot");
+}));
+["dragleave","drop"].forEach(t => $("#drop").addEventListener(t, e => {
+  e.preventDefault(); $("#drop").classList.remove("hot");
+}));
+$("#drop").addEventListener("drop", e => {
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if(f) takeFile(f);
+});
+window.addEventListener("paste", e => {
+  const it = [...(e.clipboardData ? e.clipboardData.items : [])]
+    .find(i => i.type && i.type.startsWith("image/"));
+  if(it) takeFile(it.getAsFile());
+});
+
+/* ----------------------------------------------------------------- 选项 */
+function parseOpts(s){
+  return (s || "").split(/[,，、|;\n]+/).map(x => x.trim()).filter(Boolean).slice(0, LABELS.length);
+}
+function refreshHelper(){
+  const n = parseOpts($("#options").value).length;
+  if(n >= 2){
+    $("#helper").innerHTML = `判据模式：<b>只做一次前向</b>，直接读出 ${n} 个候选各自的概率（不逐字生成）。`;
+  }else if(n === 1){
+    $("#helper").innerHTML = `候选至少要 <b>2 个</b>（逗号分隔）才走判据，现在只有 1 个。`;
+  }else{
+    $("#helper").innerHTML = `放图 → 问一句 → 识别。<b>拖拽 / 点左上角方块 / Ctrl+V</b> 都能放图，<b>回车</b>直接跑；填上候选就出概率。`;
+  }
+}
+$("#options").addEventListener("input", refreshHelper);
+refreshHelper();
+
+/* ---------------------------------------------------------------- 渲染 */
+const esc = s => (s == null ? "" : String(s).replace(/[&<>"]/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])));
+
+function renderMain(r){
+  const hero = $("#hero");
+  hero.style.display = "";                  // 每次进来先复位（判据模式会把它藏起来）
+  $("#cands").innerHTML = "";
+  $("#metas").innerHTML = "";
+  $("#rtag").className = "chip";
+  const pw = $("#promptWrap");
+  pw.hidden = false; pw.open = false;
+  $("#promptBox").textContent = r.prompt || "—";
+
+  if(r.error){
+    $("#rtag").textContent = "出错";
+    $("#rtag").className = "chip warn";
+    hero.className = "hero err";
+    hero.textContent = r.error;
+    banner(r.error, "err");
+    return;
+  }
+  banner("");
+  $("#rtag").textContent = (r.mode === "jev" ? "候选判据" : "直接回答") + (r.has_image ? " · 有图" : " · 无图");
+
+  if(r.mode === "jev"){
+    // 判据模式不另画"放大的结论"：候选按概率降序，第一行本身就是答案。
+    if(r.answer){
+      hero.style.display = "none";
+    }else{
+      hero.className = "hero err";
+      hero.textContent = "没读出有效选项字母，这次结果不可信。";
+      $("#rtag").className = "chip warn";
+    }
+    renderCands(r);
+  }else{
+    hero.className = "hero";
+    hero.innerHTML = `<div class="gen">${esc(r.text || "（空回答）")}</div>`;
+  }
+
+  const m = [];
+  if(r.latency_ms != null) m.push(`<span><b>${(r.latency_ms/1000).toFixed(2)}</b> s</span>`);
+  if(r.mode === "jev" && r.answer && r.answer.prob != null)
+    m.push(`<span>top-1 <b>${(r.answer.prob*100).toFixed(1)}%</b></span>`);
+  if(r.mode === "jev" && r.mass != null)
+    m.push(`<span>mass <b>${r.mass.toFixed(3)}</b></span>`);
+  if(r.prompt_n != null){
+    const cn = r.cached_n;
+    m.push(`<span><b>${r.prompt_n}</b> tok` +
+      (cn > 0 ? ` · 复用 <b>${cn}</b>` : cn < 0 ? ` · 回退 <b>${-cn}</b>` : "") + `</span>`);
+  }
+  if(r.usd_per_1000 != null) m.push(`<span>$<b>${r.usd_per_1000.toFixed(4)}</b> / 千次</span>`);
+  $("#metas").innerHTML = m.join("");
+}
+
+function renderCands(r){
+  const labels = r.labels || [];
+  if(!labels.length) return;
+  const texts = r.option_texts || [];
+  // 按概率降序 => 行号就是名次。列表里不出现 A/B/C/D（那是给模型的），只用 1/2/3… 编号。
+  labels.map((L, i) => ({L, t: texts[i] || "", p: (r.probs || {})[L] || 0}))
+        .sort((x, y) => y.p - x.p)
+        .forEach((row, idx) => {
+          const d = document.createElement("div");
+          d.className = "cand";
+          d.innerHTML = `<span class="L">${idx + 1}</span>
+            <span class="t" title="${esc(row.t)}">${esc(row.t)}</span>
+            <span class="bar"><i style="width:${(row.p * 100).toFixed(2)}%"></i></span>
+            <span class="pct">${(row.p * 100).toFixed(1)}%</span>`;
+          $("#cands").appendChild(d);
+        });
+}
+
+/* --------------------------------------------------------------- 识别 */
+function setBusy(on){
+  const b = $("#go");
+  b.disabled = on;
+  b.classList.toggle("busy", on);
+  b.textContent = on ? "识别中…" : "识别";
+}
+
+async function go(){
+  if(!IMG){ banner("先放一张图 —— 拖进来，或点左上角方块，或 Ctrl+V 粘贴。", "warn"); return; }
+  const q = $("#question").value.trim() || "这张图里是什么？";
+  const opts = parseOpts($("#options").value);
+  setBusy(true); banner("");
+  try{
+    const res = await fetch("/api/ask", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        image: IMG.dataUrl, question: q, options: opts,
+        mode: opts.length >= 2 ? "jev" : "gen",
+      }),
+    });
+    const r = await res.json();
+    renderMain(r);
+  }catch(e){
+    banner("请求失败：" + e.message, "err");
+  }finally{
+    setBusy(false);
+  }
+}
+$("#go").addEventListener("click", go);
+
+["#question","#options"].forEach(sel => $(sel).addEventListener("keydown", e => {
+  if(e.key === "Enter" && !e.isComposing){ e.preventDefault(); go(); }
+}));
+
+/* ------------------------------------- 示例：一键跑一次「判据」，展示 Image JEV 长什么样 */
+async function runDemo(){
+  const d = await (await fetch("/api/demo")).json();
+  if(!d || !d.image) throw new Error("取不到示例图");
+  showImage(d.image, d.name, d.bytes, "（示例图）");
+  $("#question").value = "这张图里是什么棋？";
+  $("#options").value = "中国象棋, 国际象棋, 围棋, 五子棋";
+  refreshHelper();
+  await go();
+}
+$("#tryDemo").addEventListener("click", async () => {
+  const b = $("#tryDemo"); b.disabled = true; b.textContent = "跑示例中…";
+  try{ await runDemo(); }
+  catch(e){ banner("示例跑不起来：" + e.message, "err"); }
+  finally{ b.disabled = false; b.textContent = "▷ 用示例图跑一次判据"; }
+});
+
+/* ----------------------- ?demo=1 ：打开就自动跑一遍（截图/演示用，平时用不到） */
+if(new URLSearchParams(location.search).get("demo") === "1"){
+  runDemo().catch(() => {});
+}
+
+/* --------------------------------------------------------------- 状态 */
+(async function ping(){
+  const el = $("#conn");
+  try{
+    const h = await (await fetch("/api/health")).json();
+    if(h.up){
+      const name = (h.model || "").split(/[\\/]/).pop();
+      el.className = "status ok";
+      el.innerHTML = `<i></i>模型在线` +
+        (name ? `<span class="sep">·</span><span class="nm" title="${esc(name)}">${esc(name)}</span>` : "") +
+        (h.n_ctx ? `<span class="sep">·</span>ctx ${h.n_ctx}` : "") +
+        (h.vision ? "" : `<span class="sep">·</span>无视觉头`);
+      if(!h.vision) banner("服务端没挂 mmproj —— 图会被忽略。用 ..\\llmserver.bat 起（VISION=1）。", "warn");
+    }else{
+      el.className = "status bad";
+      el.innerHTML = "<i></i>模型离线";
+      banner("18080 没有应答。先在别处起 ..\\llmserver.bat。", "err");
+    }
+  }catch(e){
+    el.className = "status bad";
+    el.innerHTML = "<i></i>桥接异常";
+  }
+})();
+</script>
+</body>
+</html>

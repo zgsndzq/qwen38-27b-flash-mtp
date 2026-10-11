@@ -1,0 +1,5 @@
+{"id":"q1-river","image":"F:/super/llmchat/mem/chess.png","question":"棋盘正中间那条河界上写的是哪四个字？","options":["楚河汉界","楚河漢界","汉界楚河"],"gold":"B"}
+{"id":"q2-top-mid","image":"F:/super/llmchat/mem/chess.png","question":"最上面一行正中间那一枚棋子是什么？","options":["帥","將","士"],"gold":"B"}
+{"id":"q3-red-pawns","image":"F:/super/llmchat/mem/chess.png","question":"河界下方第一行一共有几枚红兵？","options":["5","3","7"],"gold":"A"}
+{"id":"q4-top-left","image":"F:/super/llmchat/mem/chess.png","question":"最上面一行最左边那一枚棋子是什么？","options":["車","馬","象"],"gold":"A"}
+{"id":"q5-noimg-ctrl","question":"最上面一行正中间那一枚棋子是什么？","options":["帥","將","士"],"gold":"B"}

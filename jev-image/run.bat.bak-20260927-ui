@@ -1,0 +1,41 @@
+@echo off
+setlocal
+cd /d "%~dp0"
+title Image JEV : model 18080
+
+rem --------------------------------------------------------------- python
+set "PY="
+where python >nul 2>nul
+if not errorlevel 1 set "PY=python"
+if not defined PY if exist "%USERPROFILE%\.workbuddy\binaries\python\versions\3.13.12\python.exe" set "PY=%USERPROFILE%\.workbuddy\binaries\python\versions\3.13.12\python.exe"
+if not defined PY (
+  echo [ERROR] python not found. Install python, or set PY=... in this file.
+  pause
+  exit /b 1
+)
+
+rem --------------------------------------------- the model server, port 18080
+rem Deliberately NOT started here: run ..\llmserver.bat in another window first.
+curl -s -m 3 http://127.0.0.1:18080/health >nul 2>nul
+if errorlevel 1 echo [WARN] 18080 is not answering - start ..\llmserver.bat first.
+
+if not exist "%~dp0out" mkdir "%~dp0out"
+
+rem no arguments = run the bundled sample set, then score it
+if "%~1"=="" (
+  "%PY%" "%~dp0image_jev.py" --batch "%~dp0samples\chess.jsonl" --out "%~dp0out\preds.jsonl"
+  echo.
+  "%PY%" "%~dp0image_jev.py" --score "%~dp0out\preds.jsonl"
+  echo.
+  echo   preds: out\preds.jsonl
+  echo   usage: run.bat --image mem\chess.png --question "..." --options "A,B,C"
+  echo          run.bat --batch samples\chess.jsonl --out out\preds.jsonl
+  echo          run.bat --score out\preds.jsonl
+  echo          run.bat --batch items.jsonl --dry
+  pause
+  exit /b 0
+)
+
+"%PY%" "%~dp0image_jev.py" %*
+
+pause

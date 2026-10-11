@@ -1,0 +1,42 @@
+{
+  "root": "F:\\github",
+  "total_files": 980,
+  "total_mb": 8.79,
+  "by_category": {
+    "config": 126,
+    "css": 37,
+    "html": 73,
+    "js": 141,
+    "markdown": 183,
+    "markup": 18,
+    "other": 55,
+    "python": 147,
+    "shell": 60,
+    "sql": 11,
+    "ts": 129
+  },
+  "by_project": {
+    "GenericAgent": 44,
+    "PilotDeck": 106,
+    "SkillOpt": 39,
+    "SoL-Pi": 21,
+    "aipath": 35,
+    "claude": 39,
+    "claw": 55,
+    "claw-code": 38,
+    "desktop-fly": 35,
+    "docs": 45,
+    "fly-tetris": 7,
+    "guppylm": 20,
+    "laya": 18,
+    "m3e-canvas": 33,
+    "mdAGI": 27,
+    "open-design": 150,
+    "openjev": 29,
+    "opensquilla": 131,
+    "pi": 46,
+    "ppt-master": 32,
+    "skills": 30
+  },
+  "manifest": "F:\\super\\qwen38mtp\\trainlib\\MANIFEST.csv"
+}

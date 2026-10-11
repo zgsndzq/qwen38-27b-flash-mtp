@@ -1,0 +1,21 @@
+# --- large runtime payloads: not source, do not track ---
+/bin/
+/bin.bak-*/
+/cuda/
+/models/
+
+# --- big data / build output ---
+/vocab/corpus/
+/vocab/out/
+/vocab/_tools/
+
+# --- corpus library: keep top-level metadata/scripts, drop the corpora ---
+/trainlib/*/
+
+# --- generated & transient ---
+__pycache__/
+*.pyc
+*.log
+/jev-image/out/
+/jev-image/shots/
+/jev-tetris/shots/
