@@ -37,6 +37,10 @@ rem Measured 2026-10-11 on this model (MTP alone is the baseline): rewrite 76 ->
 rem code writing unchanged, free writing unchanged. n_match below 16 stalls code writing.
 set "NMATCH=24"
 set "NGMAX=64"
+rem LOOKUP_N cap on one lookup (ngram) draft, now that the engine has a separate
+rem limit for it (patch 0039): a lookup draft copies text already in the context, so
+rem it is cheap and can go far. 0 = fall back to DRAFT_N (the model drafter's cap).
+set "LOOKUP_N=%NGMAX%"
 set "NGMIN=24"
 
 rem ---- engine switches that used to live in features.ini ----
@@ -82,7 +86,8 @@ rem when it has nothing to copy, so free-form text keeps the plain MTP path.
   --spec-draft-n-min-adaptive 1 ^
   --kv-vram-cells %KVVRAM% --kq-mask-packed ^
   --spec-type ngram-mod,draft-mtp-adaptive --spec-draft-n-max %DRAFT_N% ^
-  --spec-ngram-mod-n-min %NGMIN% --spec-ngram-mod-n-max %NGMAX% ^
+  --spec-lookup-n-max %LOOKUP_N% --spec-ngram-mod-n-min %NGMIN% ^
+  --spec-ngram-mod-n-max %NGMAX% ^
   --spec-ngram-mod-n-match %NMATCH% ^
   --alias "Ternary-Bonsai-2-27B" ^
   %VISARG%
