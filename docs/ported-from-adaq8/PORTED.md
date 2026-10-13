@@ -112,7 +112,7 @@ copy /y llmserver.bat.bak-20260928-preadaq8 llmserver.bat
 | 上游那 4 个提交 | #265 ARM NEON PQ2_0 / #291 Vulkan / **#318 CUDA GDN 修复** / #304 DFlash2 opt-in lookup |
 | 对我们有效 | **只有 #318**（CUDA GDN gather ids 内存复用时的正确性修复。Bonsai-2 是 qwen35+GDN 混合架构，65 层里约 49 层 GDN） |
 | 其余三个 | ARM / Vulkan / DFlash2（我们走 CUDA + draft-mtp）**零影响** |
-| 编译 | `F:\super\llm\forks\ada-q8\_build_q8.bat`，`BUILD_EXIT=0`，243/243，零 error，sm_89 |
+| 编译 | `F:\super\qwen38mtp\ada-q8\_build_q8.bat`，`BUILD_EXIT=0`，243/243，零 error，sm_89 |
 | 验证方式 | `.obj` mtime 晚于源码（`--version` 串是 CMake configure 缓存，不可当判据） |
 | 产物 | 15 个（5 exe / 10 dll），已铺到 `build-q8\bin` + `adaq8\bin` + `qwen38mtp\bin`，**sha256 三处一致** |
 | 模型 | **无需同步** —— `adaq8\models` 是指向 `qwen38mtp\models` 的 junction，本就是同一份 |

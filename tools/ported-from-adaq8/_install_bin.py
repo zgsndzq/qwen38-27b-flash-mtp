@@ -17,7 +17,7 @@ import shutil
 import sys
 import time
 
-SRC = r"F:\super\llm\forks\ada-q8\build-q8\bin"
+SRC = r"F:\super\qwen38mtp\ada-q8\build-q8\bin"
 DST = r"F:\super\qwen38mtp\bin"
 TS = time.strftime("%Y%m%d-%H%M%S")
 

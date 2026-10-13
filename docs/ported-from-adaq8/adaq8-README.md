@@ -12,8 +12,8 @@
 | 上游 fork | `https://github.com/professorpalmer/llama.cpp-ada-ternary`，分支 `bonsai-q8-product` |
 | commit | `c8b8993a6` → `version: 0.2.0-dev (build 462)` |
 | 参考配方 | `https://github.com/professorpalmer/bonsai-ada-surgery`（README 的 Windows 旋钮 + Linux 参考命令） |
-| 源码 worktree | `F:\super\llm\forks\ada-q8`（git worktree，base = PrismML `9a9394a`） |
-| 构建目录 | `F:\super\llm\forks\ada-q8\build-q8`（`CMAKE_CUDA_ARCHITECTURES=89` = Ada sm_89） |
+| 源码 worktree | `F:\super\qwen38mtp\ada-q8`（git worktree，base = PrismML `9a9394a`） |
+| 构建目录 | `F:\super\qwen38mtp\ada-q8\build-q8`（`CMAKE_CUDA_ARCHITECTURES=89` = Ada sm_89） |
 | 本机 GPU | RTX 4060 Laptop 8 GB，compute_cap **8.9 = Ada**，带宽 **256 GB/s**（他们的测试卡 RTX 4070 同为 Ada，504 GB/s） |
 
 ## 实测结果

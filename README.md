@@ -67,7 +67,7 @@
 合计 **≈ 36 GB**，但 **Git 只跟踪 125 个文件 / 3.2 MB** —— 大件全在 `.gitignore` 里，
 各有各的渠道，`git status` 以后只会看到源码和配置。
 
-⚠️ **引擎源码不在这里**。它是 `F:\super\llm\forks\ada-q8`（对 `PrismML-Eng/llama.cpp` 的 fork），
+⚠️ **引擎源码不在这里**。它是 `F:\super\qwen38mtp\ada-q8`（对 `PrismML-Eng/llama.cpp` 的 fork），
 本包只**消费**它的编译产物（`build\bin\`）。
 
 ---
@@ -131,7 +131,7 @@ python mtp_head_probe.py ..\weights\Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf
 
 1. **`llmserver.bat` 和 `features.ini` 的注释必须是纯 ASCII。** UTF-8 中文注释在 cmd(936) 下按 GBK 解码会错位：某行中文字节数为奇数时会与下一行首字节配对、吃掉下一行的 `rem`，后面被当命令执行，报一堆 `'xxx' is not recognized`。**已实测踩过。**
    ⇒ 改完任何 bat 都跑一次 `python tools\bat_audit.py`，再加 `--diff llmserver.bat <改后的>` 确认"真正改了什么"。
-2. **本包只带 CUDA 运行时，没有编译工具链。** 要重编引擎，得回到 `F:\super\llm\forks\ada-q8`（完整 CUDA 在 `F:\super\tools\cuda`，含 nvcc）。
+2. **本包只带 CUDA 运行时，没有编译工具链。** 要重编引擎，得回到 `F:\super\qwen38mtp\ada-q8`（完整 CUDA 在 `F:\super\tools\cuda`，含 nvcc）。
 3. **`cuda\bin` 里精简掉的 dll 若被新二进制需要，会启动即失败。** 换二进制后要重测。
 4. **换底座模型时**：`llmserver.bat` 的 `MODEL` 与 `features.ini` 里任何与模型绑定的项（如短表路径）要一起核；`VISION=1` 的 mmproj 需与新底座匹配。
 5. **换草稿头不必重新嫁接**：trunk 相同，直接替换 weights 里的 gguf 即可。
@@ -174,7 +174,7 @@ python mtp_head_probe.py ..\weights\Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf
 
 | 包内 | 原位置 |
 |---|---|
-| `build\bin\` | `F:\super\llm\forks\ada-q8\build-q8\bin`（2026-10-13 合入 14 个上游提交后重编） |
+| `build\bin\` | `F:\super\qwen38mtp\ada-q8\build-q8\bin`（2026-10-13 合入 14 个上游提交后重编） |
 | `build\cuda\bin\` | `F:\super\tools\cuda\bin`（只取运行时 dll；**未带** nvcc / ptxas / nvdisasm） |
 | `weights\` | `Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf`（生产底座）等 6 个 gguf（2026-10-13 从 `models\` 改名） |
 | `engine\` | 原 `src\`：PTQ1 构建脚本、`_dflash_bonsai.patch`、Ampere / SM86 交接文档（仅留档） |
