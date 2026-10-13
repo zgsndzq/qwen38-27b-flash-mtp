@@ -1,22 +1,37 @@
-# --- large runtime payloads: not source, do not track ---
-/bin/
-/bin.bak-*/
-/cuda/
-/models/
+# 大件不进 Git —— 各有分发渠道：
+#   /weights/  *.gguf        -> Hugging Face Hub
+#   /build/    二进制+CUDA   -> GitHub Releases
+#   /data/     数据工程产物   -> HF dataset repo
+/weights/
+/build/
+/data/
 
-# --- big data / build output ---
-/vocab/corpus/
-/vocab/out/
-/vocab/_tools/
+# 语料与生成物：代码在，语料不在
+/train/vocab/corpus/
+/train/vocab/out/
+/train/vocab/_tools/
+/train/trainlib/*/
+/train/ternary/out/
 
-# --- corpus library: keep top-level metadata/scripts, drop the corpora ---
-/trainlib/*/
+# 训练产物
+/train/**/*.pt
+/train/**/*.bin
+/train/**/*.idx
 
-# --- generated & transient ---
+# 生成物与临时文件
 /tmp/
 __pycache__/
 *.pyc
 *.log
-/jev-image/out/
-/jev-image/shots/
-/jev-tetris/shots/
+
+# 应用输出
+/apps/jev-image/out/
+/apps/jev-tetris/shots/
+
+# 第三方克隆 / 独立子项目：各自是仓，父仓不引用
+/train/cute-triadic-gdn/
+/train/ternary/
+
+# 应用截图
+/apps/jev-image/shots/
+/apps/jev-tetris/shots/

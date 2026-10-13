@@ -23,11 +23,11 @@ import time
 import urllib.request
 
 ROOT     = r"F:\super\qwen38mtp"
-PROD_BIN = os.path.join(ROOT, "bin", "llama-server.exe")
+PROD_BIN = os.path.join(ROOT, "build", "bin", "llama-server.exe")
 ADA_BIN  = r"F:\super\llm\forks\ada-combo\build-ada\bin\llama-server.exe"
 
-MODEL  = os.path.join(ROOT, "models", "Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf")
-MMPROJ = os.path.join(ROOT, "models", "mmproj-Qwen3.8-27B-Q8_0.gguf")
+MODEL  = os.path.join(ROOT, "weights", "Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf")
+MMPROJ = os.path.join(ROOT, "weights", "mmproj-Qwen3.8-27B-Q8_0.gguf")
 CALIB  = os.path.join(ROOT, "calib",  "kv-bias.Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf")
 VMAP   = os.path.join(ROOT, "maps",   "shortlist_24k_mix.vocab.txt")
 
@@ -97,8 +97,8 @@ ARMS = [
 
 def child_env(extra=None):
     e = dict(os.environ)
-    e["PATH"] = os.path.join(ROOT, "cuda", "bin") + os.pathsep + r"F:\super\tools\cuda\bin" + os.pathsep + e.get("PATH", "")
-    e["CUDA_PATH"] = os.path.join(ROOT, "cuda")
+    e["PATH"] = os.path.join(ROOT, "build", "cuda", "bin") + os.pathsep + r"F:\super\tools\cuda\bin" + os.pathsep + e.get("PATH", "")
+    e["CUDA_PATH"] = os.path.join(ROOT, "build", "cuda")
     e["LLAMA_ATTN_ROT_DISABLE"] = "1"
     e["LLAMA_SPEC_PQ"] = "0"
     e["GGML_CUDA_GRAPH_OPT"] = "1"

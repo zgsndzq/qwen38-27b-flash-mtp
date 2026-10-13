@@ -15,8 +15,8 @@ set "EFFORT=low"
 rem TEMP: sampling temperature
 set "TEMP=0.6"
 
-set PATH=%~dp0cuda\bin;%PATH%
-set CUDA_PATH=%~dp0cuda
+set PATH=%~dp0build\cuda\bin;%PATH%
+set CUDA_PATH=%~dp0build\cuda
 set LLAMA_SPEC_PQ=0
 set GGML_CUDA_DISABLE_GRAPHS=1
 set GGML_CUDA_PDL=1
@@ -27,7 +27,7 @@ title Ternary-Bonsai-2-27B-SelfMTP-Q6K :18080
 
 rem -ub 256: finer prompt reuse (a cached-doc decision goes 2.2 s -> 0.7 s) for ~1% of prefill speed
 rem q4_0 KV is required by --kv-mean-center; the draft map keeps one draft step at 26 MB not 265 MB
-"%~dp0bin\llama-server.exe" -m "%~dp0models\Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf" ^
+"%~dp0build\bin\llama-server.exe" -m "%~dp0weights\Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf" ^
   --host 127.0.0.1 --port 18080 --parallel %SLOTS% -rea %REA% ^
   -c %CTX% -b 4096 -ub 256 -t 8 -ngl 99 -fa on -ctk q4_0 -ctv q4_0 ^
   --temp %TEMP% --top-p 0.95 --top-k 20 --reasoning-effort %EFFORT% ^

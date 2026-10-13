@@ -3,7 +3,7 @@ cd /d %~dp0
 
 rem imgtest -- minimal multi-turn client that puts ONE image in the FIRST turn only.
 rem It answers one question: does the server reuse the prefix from turn 2 on?
-rem Needs a running llama-server on :18080 with --mmproj (set VISION=1 in ..\qwen38mtp\llmserver.bat).
+rem Needs a running llama-server on :18080 with --mmproj (set VISION=1 in ..\llmserver.bat).
 rem Usage: imgtest.bat                                   (default: first image in mem\)
 rem        imgtest.bat --img mem\chess1.png --think on
 rem        imgtest.bat --url http://127.0.0.1:18081

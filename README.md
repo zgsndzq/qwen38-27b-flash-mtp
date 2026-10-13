@@ -27,7 +27,7 @@
 
 | 项 | 值 | 在哪 |
 |---|---|---|
-| 底座 | `Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf` | `llmserver.bat` → `MODEL` |
+| 底座 | `Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf`（在 `weights\`） | `llmserver.bat` → `MODEL` |
 | 视觉头 | `mmproj-Qwen3.8-27B-Q8_0.gguf`（`VISION=1` 时挂） | `llmserver.bat` |
 | 上下文 | `-c 65536` | `llmserver.bat` → `CTX` |
 | 投机 | `--spec-type draft-mtp-adaptive` + `--spec-draft-n-max 4` | `llmserver.bat` |
@@ -44,37 +44,46 @@
 
 ---
 
-## 目录结构（2026-10-11 清理后）
+## 目录结构（2026-10-13 按性质拆分）
 
-| 路径 | 内容 | 大小 |
-|---|---|---|
-| `llmserver.bat` | 唯一启动器（注释 **必须纯 ASCII**，见"维护注意"） | 1.3 KB |
-| `features.ini` | 唯一特性配置（英文注释） | 5.2 KB |
-| `bin\` | `llama-server.exe` + 全部 dll | **15 个文件** / 268 MB |
-| `bin.bak-before-adaq8sync-1010\` | **唯一保留的回退点**：同步 adaq8 引擎之前的那份 | 258 MB |
-| `cuda\` | CUDA 运行时（cublas / cublasLt / cudart / nvrtc / nvJitLink） | 698 MB |
-| `models\` | 6 个 gguf（当前底座 + 备选 + mmproj） | 30 GB |
-| `maps\` | 生产草稿短表（24k 行） | 136 KB |
-| `calib\` | kv-bias 校准数据（**历史，当前配方不再使用**） | 100 KB |
-| `docs\` | 实测账、设计稿、移植记录（见下） | 232 KB |
-| `tools\` | 测量脚本 + `_variants\`（归档变体） | ~330 KB |
-| `src\` | 历史构建脚本 / patch / 设计文档（**仅留档，不影响运行**） | 141 KB |
-| `jev-image\` | 应用：图像 JEV（含 `skill-chess-board.md`） | 582 KB |
-| `jev-tetris\` | 应用：俄罗斯方块 JEV | 952 KB |
-| `trainlib\` | 语料/词表训练库 | 19 MB |
-| `vocab\` | 词表构建工程（含 `out\` 产物） | 234 MB |
+顶层只有一张表，五类东西五种去处 —— **Git 只跟「代码」那一类**：
 
-合计 **≈ 31.4 GB**（其中 `models\` 占 30 GB）。
+| 路径 | 性质 | 进 Git | 大小 | 分发渠道 |
+|---|---|---|---|---|
+| `llmserver.bat` | 运行入口（注释 **必须纯 ASCII**，见"维护注意"） | ✅ | 3 KB | Git |
+| `features.ini` | **唯一特性配置**（英文注释） | ✅ | 5 KB | Git |
+| `maps\` | 生产草稿短表（24k 行） | ✅ | 136 KB | Git |
+| `llmchat\` | 对话客户端（`chat.py` + 启动 bat + `mem\`） | ✅ | 2.0 MB | Git |
+| `apps\` | 图形应用：`jev-image\`（含 `skill-chess-board.md`）、`jev-tetris\` | ✅ | 1.5 MB | Git |
+| `engine\` | 引擎侧留档：PTQ1 构建脚本 / `_dflash_bonsai.patch` / 交接文档 | ✅ | 141 KB | Git |
+| `docs\` | 实测账、设计稿、移植记录（见下） | ✅ | 232 KB | Git |
+| `tools\` | 测量脚本 + `_variants\`（归档变体） | ✅ | ~330 KB | Git |
+| `weights\` | 6 个 gguf（当前底座 + 备选 + mmproj） | ❌ | 30 GB | **Hugging Face** |
+| `build\bin\` | `llama-server.exe` + 全部 dll | ❌ | 331 MB | **GitHub Releases** |
+| `build\cuda\` | CUDA 运行时（cublas / cublasLt / cudart / nvrtc / nvJitLink） | ❌ | 697 MB | Releases（同包） |
+| `train\` | 训练工程：`ternary\` `trainlib\` `vocab\` `calib\` `cute-triadic-gdn\` | 部分 | 3.1 GB | 代码→Git，语料/产物→HF |
+| `data\huggingface\` | 数据准备工程 | ❌ | 2.0 GB | **HF dataset** |
+
+合计 **≈ 36 GB**，但 **Git 只跟踪 125 个文件 / 3.2 MB** —— 大件全在 `.gitignore` 里，
+各有各的渠道，`git status` 以后只会看到源码和配置。
+
+⚠️ **引擎源码不在这里**。它是 `F:\super\llm\forks\ada-q8`（对 `PrismML-Eng/llama.cpp` 的 fork），
+本包只**消费**它的编译产物（`build\bin\`）。
 
 ---
 
-## 与 `..\adaq8\` 的关系
+## 与 `..\adaq8\` 的关系（正在合并）
 
-两个项目**跑的是同一份引擎 + 同一份 gguf**，只差目录和启动配置：
+`adaq8\` 是本包的一个**旧副本 + ARC 评测工作区**，跑的是同一份引擎 + 同一份 gguf。
+**2026-10-13 起本包是唯一主仓**（`adaq8\` 没有自己的 `.git`）：
 
-- `adaq8\models` 和 `adaq8\cuda` 都是**指向本包的软链** ⇒ 权重与 CUDA 运行时全机只有一份；
-- 引擎同步方向：`adaq8\bin\*` → 本包 `bin\`（2026-10-10 做过一次，sha256 15/15 一致）；
-- 两边 `features.ini` 逐字一致，`llmserver.bat` 只差本项目独有的 `VISION` 视觉开关段。
+- `adaq8\weights` `adaq8\build\*` 应改成指向本包的 junction ⇒ 权重与 CUDA 运行时全机只有一份；
+- 引擎同步方向：`adaq8\build\bin\*` → 本包 `build\bin\`（2026-10-13 做过，sha256 **15/15 一致**）；
+- 两边 `features.ini` 逐字一致；`llmserver.bat` 只差本项目独有的 `VISION` 视觉开关段；
+- 两边的 ngram 参数已统一为 `NMATCH=24 / NGMIN=24`。
+
+**要拆掉 `adaq8\` 之前，先安置它独有的三样** —— `train\ternary\`、`data\huggingface\`、
+`train\cute-triadic-gdn\`，它们并不属于本包。
 
 移植/同步的完整记录与回退方式见 `docs\ported-from-adaq8\PORTED.md`。
 
@@ -99,7 +108,7 @@ cd F:\super\qwen38mtp\tools
 python bat_audit.py
 python ab_bench.py --bat llmserver.bat --prompts scenes --runs 5 --tag mytest
 python gen_profile.py --pad 0,2000 --max-tokens 2560 --width 128
-python mtp_head_probe.py ..\models\Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf
+python mtp_head_probe.py ..\weights\Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf
 ```
 
 ---
@@ -126,7 +135,8 @@ python mtp_head_probe.py ..\models\Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf
 3. **`cuda\bin` 里精简掉的 dll 若被新二进制需要，会启动即失败。** 换二进制后要重测。
 4. **换底座模型时**：`llmserver.bat` 的 `MODEL` 与 `features.ini` 里任何与模型绑定的项（如短表路径）要一起核；`VISION=1` 的 mmproj 需与新底座匹配。
 5. **换草稿头不必重新嫁接**：trunk 相同，直接替换 weights 里的 gguf 即可。
-6. **不要把 `bin.bak-before-adaq8sync-1010` 当垃圾删掉** —— 它是当前唯一的引擎回退点。
+6. **不要把 `F:\super\llm\_backup\bin-1012-prepartial\` 当垃圾删掉** —— 它是当前唯一的引擎回退点
+   （包内的 `bin.bak-*` 已随 2026-10-13 的拆分清掉）。
 
 ---
 
@@ -164,17 +174,17 @@ python mtp_head_probe.py ..\models\Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf
 
 | 包内 | 原位置 |
 |---|---|
-| `bin\` | `F:\super\llm\forks\ada-q8\build-q8\bin`（2026-10-10 合并上游后重编，含 `--features-file` 机制） |
-| `bin.bak-before-adaq8sync-1010\` | 2026-10-10 同步前的旧引擎（v1 全解码缓存 + 手工缝合的 #220 GDN gather 折叠） |
-| `cuda\bin\` | `F:\super\tools\cuda\bin`（只取运行时 dll；**未带** nvcc / ptxas / nvdisasm） |
-| `models\` | `llm\models\`（Bench：`Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf`） |
-| `src\` | `llm\forks\llamAmpere_gdn\` 的构建脚本与设计文档（仅留档） |
+| `build\bin\` | `F:\super\llm\forks\ada-q8\build-q8\bin`（2026-10-13 合入 14 个上游提交后重编） |
+| `build\cuda\bin\` | `F:\super\tools\cuda\bin`（只取运行时 dll；**未带** nvcc / ptxas / nvdisasm） |
+| `weights\` | `Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf`（生产底座）等 6 个 gguf（2026-10-13 从 `models\` 改名） |
+| `engine\` | 原 `src\`：PTQ1 构建脚本、`_dflash_bonsai.patch`、Ampere / SM86 交接文档（仅留档） |
 
 ---
 
 ## 相关
 
-- `..\adaq8\` —— 姊妹项目，**同一份引擎 + 同一份 gguf**，多了 ARC 评测工作区。软链指向本包的 `models\` / `cuda\`。
-- `..\llmchat\` —— 独立对话客户端（`chat.py` + `llmchat.bat` + `imgtest.bat`），连本包起的服务用。system prompt 在 `llmchat\sys.txt`。
-- `..\llm\docs\Runbook.md` —— 完整工程手册（运行时开关 / 自适应深度）。
+- `..\llm\forks\ada-q8\` —— **引擎源码仓**（fork of `PrismML-Eng/llama.cpp`）。`build\bin\` 从它来；
+  要重编引擎去那里（CUDA Toolkit 在 `F:\super\tools\cuda`）。
+- `..\llm\_backup\bin-1012-prepartial\` —— **引擎回退点**（当前唯一整套二进制备份）。
+- `..\adaq8\` —— 旧副本 + ARC 评测工作区，正在合并进本包。
 - `docs\ported-from-adaq8\PORTED.md` —— 同步记录与回退步骤。
