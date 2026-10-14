@@ -183,8 +183,8 @@ python mtp_head_probe.py ..\weights\Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf
 
 ## 相关
 
-- `..\llm\forks\ada-q8\` —— **引擎源码仓**（fork of `PrismML-Eng/llama.cpp`）。`build\bin\` 从它来；
-  要重编引擎去那里（CUDA Toolkit 在 `F:\super\tools\cuda`）。
+- `ada-q8\` —— **引擎源码仓**（fork of `PrismML-Eng/llama.cpp`）。`build\bin\` 从它来；
+  要重编引擎就在 `ada-q8\` 里编（CUDA Toolkit 在 `F:\super\tools\cuda`）。
 - `..\llm\_backup\bin-1012-prepartial\` —— **引擎回退点**（当前唯一整套二进制备份）。
 - `..\adaq8\` —— 旧副本 + ARC 评测工作区，正在合并进本包。
 - `docs\ported-from-adaq8\PORTED.md` —— 同步记录与回退步骤。
