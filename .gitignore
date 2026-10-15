@@ -1,0 +1,23 @@
+# Things that are not part of this repository.
+# Each one has its own distribution channel:
+
+# weights        -> Hugging Face   huggingface.co/SuperLogic/Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km
+/weights/*.gguf
+
+# engine binary  -> GitHub Releases  (or build it from source)
+/build/*
+!/build/README.md
+
+# engine source  -> its own repo     git clone https://github.com/zgsndzq/ada-ternary code
+/code/
+
+# your machine paths, never shared
+code/build.local.bat
+
+# local memory bank: your own pictures and notes
+/llmchat/mem/*
+!/llmchat/mem/README.md
+
+__pycache__/
+*.pyc
+*.log

@@ -1,0 +1,12 @@
+# These MUST stay CRLF: cmd.exe mis-parses LF-only scripts (rem lines get split,
+# a multi-line if/else gets cut in half, and call vcvars stops working).
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Shell scripts are the exact opposite: a CRLF shebang gives "bad interpreter".
+*.sh text eol=lf
+
+# features.ini is read by our own parser, which strips '\r' (common/features.cpp),
+# so CRLF is safe on Linux too - kept CRLF only to match the .bat files next to it.
+*.ini text eol=crlf
