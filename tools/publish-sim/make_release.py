@@ -77,7 +77,8 @@ os.makedirs(os.path.join(stage, "ada-ternary"), exist_ok=True)
 dst = os.path.join(stage, "ada-ternary")
 shutil.copytree(os.path.join(Q, "build", "bin"),  os.path.join(dst, "build", "bin"))
 shutil.copytree(os.path.join(Q, "build", "cuda"), os.path.join(dst, "build", "cuda"))
-for f in ["llmserver.bat", "features.ini", "README.md", "README.en.md"]:
+for f in ["llmserver.bat", "features.ini", "README.md", "README.en.md",
+          "LICENSE", "NOTICE"]:
     shutil.copy2(os.path.join(Q, f), os.path.join(dst, f))
 shutil.copytree(os.path.join(Q, "maps"), os.path.join(dst, "maps"))
 # 'mem' is the author's private image/text memory bank - never ship it. A fresh

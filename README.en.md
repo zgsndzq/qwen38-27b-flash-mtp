@@ -141,10 +141,21 @@ Explicit command-line arguments **take priority over** `features.ini`.
 
 ## 7. Provenance and licence
 
-**To be completed — required before upload.**
+**License: Apache 2.0**
 
-This is a **derivative work**: the trunk comes from `Swift-Bonsai-2` 27B (architecture `qwen35`).
-What we produced is the **ternary quantisation and the MTP head conversion — no retraining**.
-The licence follows the base model; we add no further restrictions.
+The weights are a **derivative work**, not an original model. The chain, every link Apache 2.0:
 
-See the model card on the weights repository for details.
+| Layer | Source | What it did |
+|---|---|---|
+| 1 | `Qwen/Qwen3.8-27B`　Copyright 2026 Alibaba Cloud | original model, 27B hybrid attention (~75% linear / ~25% full) |
+| 2 | `prism-ml/Ternary-Bonsai-2-27B-gguf`　PrismML | matrix weights converted to ternary (PTQ1_0) |
+| 3 | `ukisai/Swift-Bonsai-2-GGUF`　UkisAI | reasoning-efficiency fine-tune (~39.8% fewer thinking tokens, accuracy held) |
+| 4 | MTP draft head, from `ProCreations` | see `graft.donor.name` inside the gguf |
+| 5 | **this project** | merged layers 3 and 4 into one GGUF and repacked at several precisions. **No retraining.** |
+
+The engine (`code\`, a fork of `PrismML-Eng/llama.cpp`) is **MIT**.
+
+**Required attribution:** *"Created using Bonsai by Prism ML."*
+
+Full statements are in `LICENSE` (the Apache 2.0 text) and `NOTICE` (per-layer copyright and
+modification notes) at the package root.

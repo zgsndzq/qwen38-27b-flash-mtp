@@ -1,8 +1,12 @@
 ---
 language: [zh, en]
-base_model: Swift-Bonsai-2-27B          # TODO 确认上游仓库与许可证
+base_model:
+  - Qwen/Qwen3.8-27B
+  - prism-ml/Ternary-Bonsai-2-27B-gguf
+  - ukisai/Swift-Bonsai-2-GGUF
 library_name: llama.cpp
 pipeline_tag: text-generation
+license: apache-2.0
 tags: [ternary, PTQ1_0, quantization, GGUF, MTP, speculative-decoding, llama.cpp]
 ---
 
@@ -91,18 +95,23 @@ q4_0 KV，64k 上下文）：
 
 ## 许可证与出处
 
-**待补 — 必须在上传前确认。**
+**License: Apache 2.0**
 
-本仓库是**衍生作品**：主干来自 `Swift-Bonsai-2` 27B（`general.name = Swift-Bonsai-2-merged-PTQ1_0`，
-架构 `qwen35`），我们只做了三值量化与 MTP 头的转换，**没有重新训练**。
+本仓库是**衍生作品**，不是原创模型。完整链条（逐层均为 Apache 2.0）：
 
-因此：
+| 层 | 出处 | 做了什么 |
+|---|---|---|
+| 1 | [`Qwen/Qwen3.8-27B`](https://huggingface.co/Qwen/Qwen3.8-27B)　Copyright 2026 Alibaba Cloud | 原始模型（27B 混合注意力，约 75% 线性 + 25% 全注意力） |
+| 2 | [`prism-ml/Ternary-Bonsai-2-27B-gguf`](https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf)　PrismML | 矩阵权重转三值（PTQ1_0，ternary g128 + 块内 Hadamard 旋转 + FP16 组缩放） |
+| 3 | [`ukisai/Swift-Bonsai-2-GGUF`](https://huggingface.co/ukisai/Swift-Bonsai-2-GGUF)　UkisAI | reasoning-efficiency 微调：惩罚触发过度思考的 reasoning-marker token，官方报告思考 token 减约 39.8%、基准分持平 |
+| 4 | MTP 草稿头，来自 `ProCreations` | 本仓库 gguf 的 `graft.donor.name` 指向它 |
+| 5 | **本仓库** | 把第 3 层与第 4 层合并进同一个 GGUF，按不同精度重新打包（记录见 `graft.*` 元数据，工具 `bonsai2-mtp merge 1`）。**未重新训练** |
 
-- 本仓库**不能**声明为原创模型，许可证**跟随 base model**，不额外施加限制
-- 使用者需同时遵守 base model 的许可条款
-- 若 base model 有商用限制，本量化版同样受限
+引擎侧（`professorpalmer/llama.cpp-ada-ternary`，fork of `PrismML-Eng/llama.cpp`）为 **MIT**。
 
-> TODO（上传前必须填）：base model 的 HF 仓库地址、其许可证名称、以及本量化版的产出方署名。
+**必填署名：** *"Created using Bonsai by Prism ML."*
+
+使用本仓库需同时遵守上述各层的许可条款。完整声明见仓库根目录的 `LICENSE` 与 `NOTICE`。
 
 ---
 

@@ -137,9 +137,20 @@ _build_q8.bat
 
 ## 七、出处与许可证
 
-**待补 —— 上传前必须确认。**
+**License: Apache 2.0**
 
-这是**衍生作品**：主干来自 `Swift-Bonsai-2` 27B（架构 `qwen35`），我们做的是
-**三值量化 + MTP 头转换，没有重新训练**。许可证跟随 base model，不额外施加限制。
+权重是**衍生作品**，不是原创模型。逐层如下（每一层都是 Apache 2.0）：
 
-详见权重仓库的 model card。
+| 层 | 出处 | 做了什么 |
+|---|---|---|
+| 1 | `Qwen/Qwen3.8-27B`　Copyright 2026 Alibaba Cloud | 原始模型，27B 混合注意力（约 75% 线性 + 25% 全注意力） |
+| 2 | `prism-ml/Ternary-Bonsai-2-27B-gguf`　PrismML | 把矩阵权重转成三值（PTQ1_0） |
+| 3 | `ukisai/Swift-Bonsai-2-GGUF`　UkisAI | reasoning-efficiency 微调（思考 token 减约 39.8%，基准分持平） |
+| 4 | MTP 草稿头，来自 `ProCreations` | 见包内 gguf 的 `graft.donor.name` |
+| 5 | **本项目** | 把第 3 层与第 4 层合并成一个 GGUF 并按精度重新打包，**未重新训练** |
+
+引擎（`code\`，fork of `PrismML-Eng/llama.cpp`）是 **MIT**。
+
+**必填署名：** *"Created using Bonsai by Prism ML."*
+
+完整声明见包根 `LICENSE`（Apache 2.0 全文）与 `NOTICE`（逐层版权与改动说明）。

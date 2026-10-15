@@ -1,0 +1,75 @@
+NOTICE
+======
+
+ada-ternary — Ternary-Bonsai-2-27B runtime package
+
+本包分发的**权重**是衍生作品，不是原创模型。按 Apache License 2.0 第 4 条，
+下面逐层列出上游出处与版权声明。
+
+
+权重（weights/*.gguf）—— 衍生链
+--------------------------------
+
+1. Qwen3.8-27B
+       Copyright 2026 Alibaba Cloud
+       https://huggingface.co/Qwen/Qwen3.8-27B
+       License: Apache License 2.0
+
+2. Ternary Bonsai 2 27B
+       PrismML  <https://prismml.com>
+       https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf
+       License: Apache License 2.0
+       改动：把 Qwen3.8-27B 的矩阵权重转成三值（PTQ1_0，ternary g128，
+             块内 Hadamard 旋转 + FP16 组缩放）
+
+3. Swift Bonsai 2
+       UkisAI  <https://ukisai.com/swift-bonsai-2>
+       https://huggingface.co/ukisai/Swift-Bonsai-2-GGUF
+       License: Apache License 2.0
+       改动：在 Ternary Bonsai 2 上做 reasoning-efficiency 微调
+             （惩罚触发过度思考的 reasoning-marker token；
+              官方报告思考 token 减约 39.8%，基准分持平）
+
+   本包的 gguf 里 general.name = "Swift-Bonsai-2-merged-PTQ1_0"，
+   对应的就是上面这一层。
+
+4. MTP 草稿头（嫁接来源）
+       ProCreations
+       graft.donor.name = Ternary-Bonsai-2-27B-PTQ1_0-mtp-procreations.gguf
+       License: 同 Bonsai 2（Apache License 2.0）
+
+5. 本包产出的部分
+       把上面第 3 层（Swift Bonsai 2）与第 4 层（MTP 草稿头）合并进同一个
+       GGUF，并按不同精度重新打包。产出记录见包内 gguf 的 graft.* 元数据
+       （graft.tool = "bonsai2-mtp merge 1"、graft.head_blocks、
+        graft.head_tensor_count）。未重新训练。
+
+
+引擎（build/ 下的二进制，对应 code/ 源码）
+------------------------------------------
+
+fork of PrismML-Eng/llama.cpp
+       License: MIT（全文见 code/LICENSE）
+       上游: ggml-org/llama.cpp
+             Copyright (c) 2023-2026 The ggml authors
+
+
+本包自有的文件
+--------------
+
+除引擎代码与权重外，本包自有的部分（llmserver.bat、features.ini、
+llmchat/、maps/、docs/、tools/ 等）由本项目作者提供，
+同样以 Apache License 2.0 分发。
+
+
+必填署名
+--------
+
+    "Created using Bonsai by Prism ML."
+
+
+许可证全文
+----------
+
+Apache License 2.0 全文见同目录 LICENSE。
+引擎侧的 MIT 许可全文见 code/LICENSE。
