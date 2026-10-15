@@ -38,14 +38,14 @@ tags: [ternary, PTQ1_0, quantization, GGUF, MTP, speculative-decoding, llama.cpp
 
 | 文件 | 大小 | 说明 |
 |---|---|---|
-| `Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf` | 5.79 GB | **推荐**。三值主干 + MTP 头，嵌入/输出层用 q4_K_M 保住精度 |
-| `Swift-Bonsai-2-PTQ1_0-mtp.gguf` | 5.79 GB | 同上，全三值，最小 |
-| `Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf` | 5.79 GB | 早期命名，等价 |
-| `Swift-Bonsai-2-PTQ1_0-mtp-pro.gguf` | 5.96 GB | pro 配置，多留了几层高精度 |
-| `Swift-Bonsai-2-PTQ1_0.gguf` | 5.54 GB | **无 MTP 头**，不支持自投机 |
-| `mmproj-Qwen3.8-27B-Q8_0.gguf` | 0.59 GB | 视觉投影器（可选，要读图才需要） |
+| `Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf` | 5.79 GB | **主模型**。三值主干 + 嫁接的 MTP 草稿头（866 张量），嵌入/输出层用 q4_K_M 保住精度 |
+| `mmproj-Qwen3.8-27B-Q8_0.gguf` | 0.59 GB | 视觉投影器，要读图才需要 |
 
 > sha256 见本仓库 `SHA256SUMS`。
+
+**只有这两个。** 我们本地开发期间还试过几个变体（不同 MTP donor、不同嵌入精度、以及一个
+没有 MTP 头的版本），它们要么被取代、要么砍掉了自投机这个核心特性，**都不发布** —— 避免
+下载者拿到一个"看起来一样但不能用 MTP"的文件。
 
 ---
 
