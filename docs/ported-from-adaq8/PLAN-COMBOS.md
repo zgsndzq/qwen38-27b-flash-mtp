@@ -1,7 +1,7 @@
 # adaq8 — 最优组合排序（评审用）
 
 > 2026-09-28。方法：**不发明、不扫参**。每条组合 = 「别人的实测出处」+「我们的验收数字」。
-> 我们的实测文件：`bench/arms*.json`（本轮）、`../qwen38mtp/docs/SPEEDUP-BUDGET.md`（09-25，旧生产构建）。
+> 我们的实测文件：`bench/arms*.json`（本轮）、`../qwen27b/docs/SPEEDUP-BUDGET.md`（09-25，旧生产构建）。
 > 他们的实测出处：`llm/forks/ada-q8` 的 commit 正文 + `Bonsai-demo` 官方文档。
 
 ---
@@ -129,5 +129,5 @@
 
 官方启动脚本的**推荐投机路径不是 `draft-mtp`，是 `--spec-type draft-dspark -ngld 999`**（独立的 `*dspark-dflash*.gguf` drafter，~0.6 GB），他们注释自报 **decode 1.8~2×**。
 ⚠️ 代价写在注释里：**它关掉 prompt-cache 复用并强制单 slot。** 我们的记忆设计是「只注入首轮 + 前缀一字不改 ⇒ cache 稳定命中」，所以这条与我们的 chat 客户端**直接冲突**——只在做纯吞吐测试时才有意义。
-本地 `qwen38mtp\models\` 里**没有**这个 drafter，要用得先下载 + 过一遍 `gguf-dspark-to-dflash` 转换。
+本地 `qwen27b\models\` 里**没有**这个 drafter，要用得先下载 + 过一遍 `gguf-dspark-to-dflash` 转换。
 

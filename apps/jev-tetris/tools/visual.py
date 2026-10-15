@@ -17,7 +17,7 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
-SERVER_BAT = Path(r"F:\super\qwen38mtp\llmserver.bat")
+SERVER_BAT = Path(r"F:\super\qwen27b\llmserver.bat")
 PS1 = Path(r"C:\Users\bestd\.workbuddy\skills\visual-check\scripts\visual-shot.ps1")
 MODEL = "http://127.0.0.1:18080"
 UI = "http://127.0.0.1:18090"

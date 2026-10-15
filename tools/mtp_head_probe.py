@@ -10,7 +10,7 @@ Answers, for the draft-vocab-shortlist design:
 """
 import struct, sys, io
 
-PATH = r"F:\super\qwen38mtp\weights\Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf"
+PATH = r"F:\super\qwen27b\weights\Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf"
 OUT  = r"F:\super\.workbuddy\tmp\mtp_head_probe.txt"
 
 GGUF_MAGIC = b"GGUF"

@@ -175,7 +175,7 @@ branch — looks exactly like a working one, and the log gives you nothing.
 Set the env var and the library appends one line per shortlist decision to a file:
 
 ```powershell
-$env:LLAMA_DRAFT_VOCAB_TRACE = "F:/super/qwen38mtp/tools/vocabmap-trace.txt"
+$env:LLAMA_DRAFT_VOCAB_TRACE = "F:/super/qwen27b/tools/vocabmap-trace.txt"
 ```
 
 Healthy output looks like this (149 graph builds, all compact):

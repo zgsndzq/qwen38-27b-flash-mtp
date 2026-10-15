@@ -10,7 +10,7 @@ import sys
 import time
 import urllib.request
 
-ROOT = r'F:\super\qwen38mtp'
+ROOT = r'F:\super\qwen27b'
 PY = sys.executable
 OUT = r'F:\super\tmp\_claude_proxy_run.txt'
 fh = io.open(OUT, 'w', encoding='utf-8')

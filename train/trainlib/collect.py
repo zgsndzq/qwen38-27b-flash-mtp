@@ -22,7 +22,7 @@ import re
 import sys
 
 ROOT = r"F:\github"
-LIB = r"F:\super\qwen38mtp\trainlib"
+LIB = r"F:\super\qwen27b\trainlib"
 
 # ---------------------------------------------------------------- classification
 

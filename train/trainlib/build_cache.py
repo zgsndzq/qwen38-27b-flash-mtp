@@ -48,8 +48,8 @@ import struct
 import sys
 import time
 
-VOCAB_DIR = r"F:\super\qwen38mtp\vocab"
-LIB = r"F:\super\qwen38mtp\trainlib"
+VOCAB_DIR = r"F:\super\qwen27b\vocab"
+LIB = r"F:\super\qwen27b\trainlib"
 OUT_DIR = os.path.join(LIB, "lookup")
 
 sys.path.insert(0, VOCAB_DIR)

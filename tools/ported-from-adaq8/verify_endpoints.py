@@ -17,7 +17,7 @@ import time
 import urllib.error
 import urllib.request
 
-ROOT = r'F:\super\qwen38mtp'
+ROOT = r'F:\super\qwen27b'
 PORT = 18080
 OUT = r'F:\super\tmp\_api_verify.txt'
 fh = io.open(OUT, 'w', encoding='utf-8')

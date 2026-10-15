@@ -1,4 +1,4 @@
-# BENCH — qwen38mtp 包内实测账
+# BENCH — qwen27b 包内实测账
 
 > 本文件让这个包**自带证据**：所有关于"什么有效、什么无效"的结论都在这里，
 > 不必回头翻 `F:\super\llm\docs\Runbook.md`（那里是完整版，§22/§23）。
@@ -12,7 +12,7 @@
 ## 0. 怎么复现
 
 ```bat
-cd F:\super\qwen38mtp\tools
+cd F:\super\qwen27b\tools
 python bat_audit.py                                  :: 三份 bat 的编码体检 + 命令行差异
 python ab_bench.py --bat llmserver.bat --bat llmserver-adaptive.bat
 python ab_bench.py --bat llmserver-adaptive.bat --prompts code --runs 5 --tag mytest

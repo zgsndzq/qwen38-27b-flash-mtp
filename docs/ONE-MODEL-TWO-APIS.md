@@ -298,7 +298,7 @@ set "TEMP=0.6"
 
 | 要做什么 | 去哪 |
 |---|---|
-| 起服务 | `F:\super\qwen38mtp\llmserver.bat` → `127.0.0.1:18080` |
+| 起服务 | `F:\super\qwen27b\llmserver.bat` → `127.0.0.1:18080` |
 | 看判据跑起来长什么样 | `F:\super\jev-tetris\start.bat`（一键：起服务 → 桥接 18090 → 开浏览器） |
 | 判据提示词唯一出处 | `F:\super\jev-tetris\bridge.py` 的 `SYS` / `build_user` |
 | 测判据速度 | `F:\super\jev-tetris\tools\playtest.py <块数>` |

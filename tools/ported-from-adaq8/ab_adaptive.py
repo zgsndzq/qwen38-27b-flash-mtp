@@ -19,11 +19,11 @@ import sys
 import time
 import urllib.request
 
-ROOT = r'F:\super\qwen38mtp'
+ROOT = r'F:\super\qwen27b'
 PROD_BAT = os.path.join(ROOT, 'llmserver.bat')
 PORT = 18080
 LOG = os.path.join(ROOT, 'tools', '_ab_server.log')
-OUT = r'F:\super\qwen38mtp\docs\ported-from-adaq8\ADAPTIVE-AB.txt'
+OUT = r'F:\super\qwen27b\docs\ported-from-adaq8\ADAPTIVE-AB.txt'
 
 ARMS = [
     ('fixed3',    'draft-mtp',          []),

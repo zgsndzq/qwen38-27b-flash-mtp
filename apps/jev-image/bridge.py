@@ -307,7 +307,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/demo"):
             # 只给页面的 ?demo=1 用：把一张示例图交给浏览器自动跑一遍（截图/演示）。
             p = Path(os.environ.get("JEV_DEMO_IMAGE")
-                     or r"F:\super\qwen38mtp\llmchat\mem\chess.png")
+                     or r"F:\super\qwen27b\llmchat\mem\chess.png")
             if not p.exists():
                 return self._send(404, {"error": "demo image not found: %s" % p})
             url, sha, n = IJ.data_url(str(p))

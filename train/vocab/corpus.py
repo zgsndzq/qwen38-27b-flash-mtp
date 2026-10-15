@@ -327,7 +327,7 @@ def local(args) -> int:
     # CUDA redistributables) that made it into the first run and are not code the
     # model would ever be asked to write.
     super_root = VOCAB_DIR.parents[1]
-    default_roots = [super_root / "llm", super_root / "qwen38mtp", super_root / "llmchat"]
+    default_roots = [super_root / "llm", super_root / "qwen27b", super_root / "llmchat"]
     roots = [Path(r).resolve() for r in (args.roots or [str(p) for p in default_roots if p.exists()])]
     LOCAL_DIR.mkdir(parents=True, exist_ok=True)
     files = _quota_sample(list(_iter_code_files(roots)), args.limit_files)

@@ -132,7 +132,7 @@ def main(argv=None):
         print(" 模型   : %s" % (info or "(未报告)"))
     else:
         print(" [警告] 探活失败：%s" % info)
-        print("        请先启动 qwen38mtp\\llmserver.bat（且 VISION=1，已挂 --mmproj）")
+        print("        请先启动 qwen27b\\llmserver.bat（且 VISION=1，已挂 --mmproj）")
     print(" 首轮图 : %s  (%.0f KB)" % (img.name, img.stat().st_size / 1024.0))
     print(" 参数   : think=%s  temp=%s  max_tokens=%s" % (a.think, a.temp, a.max_tokens or "不限"))
     print(" 提示词 : %s" % (sys_file.name if sys_file.is_file() else "(内置)"))

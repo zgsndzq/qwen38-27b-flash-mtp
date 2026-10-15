@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import bridge  # noqa: E402
 
-ROOT = Path(r"F:\super\qwen38mtp")
+ROOT = Path(r"F:\super\qwen27b")
 BAT = ROOT / "llmserver.bat"
 URL = "http://127.0.0.1:18080"
 COLS, ROWS = 10, 20
@@ -80,7 +80,7 @@ def main():
     except Exception:
         pass
 
-    logf = open(r"F:\super\qwen38mtp\jev-tetris\tools\logs\smoke_server.log", "wb")
+    logf = open(r"F:\super\qwen27b\jev-tetris\tools\logs\smoke_server.log", "wb")
     print("launching %s ..." % BAT)
     proc = subprocess.Popen(["cmd", "/c", str(BAT)], stdout=logf, stderr=subprocess.STDOUT,
                             cwd=str(ROOT))

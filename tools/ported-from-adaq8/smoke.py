@@ -24,7 +24,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _srvlog import Server
 
-ROOT = r"F:\super\qwen38mtp"
+ROOT = r"F:\super\qwen27b"
 BASE = "http://127.0.0.1:18080"
 FAIL_DUMP = os.path.join(ROOT, "bench", "_smoke_fail.log")
 LOAD_TIMEOUT = float(os.environ.get("SMOKE_LOAD_TIMEOUT", "90"))

@@ -14,7 +14,7 @@ import difflib
 import sys
 from pathlib import Path
 
-ROOT = Path("F:/super/qwen38mtp")
+ROOT = Path("F:/super/qwen27b")
 PROD = ROOT / "llmserver.bat"
 
 VARIANTS = {

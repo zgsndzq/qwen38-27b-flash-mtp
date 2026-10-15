@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-A/B driver: production qwen38mtp binary vs the ada-combo (professorpalmer bonsai-combo) build.
+A/B driver: production qwen27b binary vs the ada-combo (professorpalmer bonsai-combo) build.
 
 Arms (identical prompts / sampling; only binary + spec block + env differ):
   P_prod : production bin + production bat args verbatim (adaptive + vocab-map, VISION=1)
@@ -22,7 +22,7 @@ import sys
 import time
 import urllib.request
 
-ROOT     = r"F:\super\qwen38mtp"
+ROOT     = r"F:\super\qwen27b"
 PROD_BIN = os.path.join(ROOT, "build", "bin", "llama-server.exe")
 ADA_BIN  = r"F:\super\llm\forks\ada-combo\build-ada\bin\llama-server.exe"
 
@@ -33,7 +33,7 @@ VMAP   = os.path.join(ROOT, "maps",   "shortlist_24k_mix.vocab.txt")
 
 PORT     = 18080
 BASE_URL = "http://127.0.0.1:%d" % PORT
-OUT      = r"F:\super\qwen38mtp\tools\_ada_ab_out.txt"
+OUT      = r"F:\super\qwen27b\tools\_ada_ab_out.txt"
 
 RUNS_PER_PROMPT = 3
 N_PREDICT       = 256
@@ -195,7 +195,7 @@ def run_arm(name, binary, args, extra_env, results):
         print("PORT BUSY -> skip arm:", busy[:2])
         return
 
-    logf = open(r"F:\super\qwen38mtp\tools\_ada_%s.log" % name, "wb")
+    logf = open(r"F:\super\qwen27b\tools\_ada_%s.log" % name, "wb")
     proc = subprocess.Popen([binary] + args, stdout=logf, stderr=subprocess.STDOUT,
                             env=child_env(extra_env), cwd=ROOT)
     try:
@@ -332,7 +332,7 @@ def main():
     txt = "\n".join(L)
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(txt)
-    with open(r"F:\super\qwen38mtp\tools\_ada_ab.json", "w", encoding="utf-8") as f:
+    with open(r"F:\super\qwen27b\tools\_ada_ab.json", "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     print(txt)
     print("\nok -> " + OUT)

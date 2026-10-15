@@ -4,7 +4,7 @@
 import struct
 import sys
 
-PATH = r"F:\super\qwen38mtp\weights\Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf"
+PATH = r"F:\super\qwen27b\weights\Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf"
 OUT = r"F:\super\tmp\_gguf_meta.txt"
 
 sink = open(OUT, 'w', encoding='utf-8')

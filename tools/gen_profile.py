@@ -116,7 +116,7 @@ def main(argv=None):
     ap.add_argument("--sample", type=float, default=1.0)
     args = ap.parse_args(argv)
 
-    sys.path.insert(0, "F:\\super\\qwen38mtp\\tools")
+    sys.path.insert(0, "F:\\super\\qwen27b\\tools")
     from ctx_ab import pad_to  # reuse the /tokenize-driven padding helper
 
     for target in [int(x) for x in args.pad.split(",")]:

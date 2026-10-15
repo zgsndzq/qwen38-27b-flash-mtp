@@ -1,4 +1,4 @@
-# qwen38mtp — Bonsai-2-27B 三值量化 + MTP 自投机 独立运行包
+# qwen27b — Bonsai-2-27B 三值量化 + MTP 自投机 独立运行包
 
 一个**自包含**的推理运行包：把 `llmserver.bat` 跑起来所需的一切都装在这个文件夹里。
 整个文件夹可以拷到任意盘符、任意 Windows x64 机器上，**只要装了 NVIDIA 驱动就能跑**
@@ -55,11 +55,14 @@
 | `maps\` | 生产草稿短表（24k 行） | ✅ | 136 KB | Git |
 | `llmchat\` | 对话客户端（`chat.py` + 启动 bat + `mem\`） | ✅ | 2.0 MB | Git |
 | `apps\` | 图形应用：`jev-image\`（含 `skill-chess-board.md`）、`jev-tetris\` | ✅ | 1.5 MB | Git |
+| `code\` | **引擎源码**（独立 git 仓，fork of `PrismML-Eng/llama.cpp`） | ✅ | 350 MB | Git |
+| `code\` | **引擎源码**（独立 git 仓，fork of `PrismML-Eng/llama.cpp`） | ✅ | 350 MB | Git |
 | `engine\` | 引擎侧留档：PTQ1 构建脚本 / `_dflash_bonsai.patch` / 交接文档 | ✅ | 141 KB | Git |
 | `docs\` | 实测账、设计稿、移植记录（见下） | ✅ | 232 KB | Git |
 | `tools\` | 测量脚本 + `_variants\`（归档变体） | ✅ | ~330 KB | Git |
 | `weights\` | 6 个 gguf（当前底座 + 备选 + mmproj） | ❌ | 30 GB | **Hugging Face** |
-| `build\bin\` | `llama-server.exe` + 全部 dll | ❌ | 331 MB | **GitHub Releases** |
+| `build\src\` | CMake / Ninja 输出目录 | ❌ | 构建中间物 | 不发布 |
+| `build\bin\` | `llama-server.exe` + 全部 dll（运行时） | ❌ | 331 MB | **GitHub Releases** |
 | `build\cuda\` | CUDA 运行时（cublas / cublasLt / cudart / nvrtc / nvJitLink） | ❌ | 697 MB | Releases（同包） |
 | `train\` | 训练工程：`ternary\` `trainlib\` `vocab\` `calib\` `cute-triadic-gdn\` | 部分 | 3.1 GB | 代码→Git，语料/产物→HF |
 | `data\huggingface\` | 数据准备工程 | ❌ | 2.0 GB | **HF dataset** |
@@ -67,8 +70,8 @@
 合计 **≈ 36 GB**，但 **Git 只跟踪 125 个文件 / 3.2 MB** —— 大件全在 `.gitignore` 里，
 各有各的渠道，`git status` 以后只会看到源码和配置。
 
-⚠️ **引擎源码不在这里**。它是 `F:\super\qwen38mtp\ada-q8`（对 `PrismML-Eng/llama.cpp` 的 fork），
-本包只**消费**它的编译产物（`build\bin\`）。
+⚠️ **引擎源码不在这个包里，但在同一个目录下** —— `code\`（对 `PrismML-Eng/llama.cpp` 的 fork）。
+本包只**消费**它的编译产物（`build\src\bin\` → 装到 `build\bin\`）。
 
 ---
 
@@ -104,7 +107,7 @@
 | `ported-from-adaq8\` | 从 adaq8 移植过来的探针脚本（网络抓包 / 端点校验等） |
 
 ```bat
-cd F:\super\qwen38mtp\tools
+cd F:\super\qwen27b\tools
 python bat_audit.py
 python ab_bench.py --bat llmserver.bat --prompts scenes --runs 5 --tag mytest
 python gen_profile.py --pad 0,2000 --max-tokens 2560 --width 128
@@ -131,7 +134,7 @@ python mtp_head_probe.py ..\weights\Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf
 
 1. **`llmserver.bat` 和 `features.ini` 的注释必须是纯 ASCII。** UTF-8 中文注释在 cmd(936) 下按 GBK 解码会错位：某行中文字节数为奇数时会与下一行首字节配对、吃掉下一行的 `rem`，后面被当命令执行，报一堆 `'xxx' is not recognized`。**已实测踩过。**
    ⇒ 改完任何 bat 都跑一次 `python tools\bat_audit.py`，再加 `--diff llmserver.bat <改后的>` 确认"真正改了什么"。
-2. **本包只带 CUDA 运行时，没有编译工具链。** 要重编引擎，得回到 `F:\super\qwen38mtp\ada-q8`（完整 CUDA 在 `F:\super\tools\cuda`，含 nvcc）。
+2. **本包只带 CUDA 运行时，没有编译工具链。** 要重编引擎，去 `code\`（完整 CUDA Toolkit 在 `F:\super\tools\cuda`，含 nvcc）。
 3. **`cuda\bin` 里精简掉的 dll 若被新二进制需要，会启动即失败。** 换二进制后要重测。
 4. **换底座模型时**：`llmserver.bat` 的 `MODEL` 与 `features.ini` 里任何与模型绑定的项（如短表路径）要一起核；`VISION=1` 的 mmproj 需与新底座匹配。
 5. **换草稿头不必重新嫁接**：trunk 相同，直接替换 weights 里的 gguf 即可。
@@ -174,7 +177,7 @@ python mtp_head_probe.py ..\weights\Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf
 
 | 包内 | 原位置 |
 |---|---|
-| `build\bin\` | `F:\super\qwen38mtp\ada-q8\build-q8\bin`（2026-10-13 合入 14 个上游提交后重编） |
+| `build\bin\` | `code\` 编出的 `build\src\bin\`（2026-10-14 全量重编：560/560，`BUILD_EXIT=0`） |
 | `build\cuda\bin\` | `F:\super\tools\cuda\bin`（只取运行时 dll；**未带** nvcc / ptxas / nvdisasm） |
 | `weights\` | `Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf`（生产底座）等 6 个 gguf（2026-10-13 从 `models\` 改名） |
 | `engine\` | 原 `src\`：PTQ1 构建脚本、`_dflash_bonsai.patch`、Ampere / SM86 交接文档（仅留档） |
@@ -183,8 +186,8 @@ python mtp_head_probe.py ..\weights\Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf
 
 ## 相关
 
-- `ada-q8\` —— **引擎源码仓**（fork of `PrismML-Eng/llama.cpp`）。`build\bin\` 从它来；
-  要重编引擎就在 `ada-q8\` 里编（CUDA Toolkit 在 `F:\super\tools\cuda`）。
+- `code\` —— **引擎源码仓**（独立 git 仓，fork of `PrismML-Eng/llama.cpp`）。`build\bin\` 从它来；
+  要重编引擎就在 `code\` 里编（CUDA Toolkit 在 `F:\super\tools\cuda`）。
 - `..\llm\_backup\bin-1012-prepartial\` —— **引擎回退点**（当前唯一整套二进制备份）。
 - `..\adaq8\` —— 旧副本 + ARC 评测工作区，正在合并进本包。
 - `docs\ported-from-adaq8\PORTED.md` —— 同步记录与回退步骤。

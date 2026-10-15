@@ -35,6 +35,6 @@ __pycache__/
 # 应用截图
 /apps/jev-image/shots/
 /apps/jev-tetris/shots/
-# 引擎源码：是个独立的 git worktree，父仓不引用
-/ada-q8/
+# 引擎源码：独立的 git 仓，父仓不引用
+/code/
 /forks/

@@ -11,7 +11,7 @@ import subprocess
 import time
 import urllib.request
 
-ROOT = r'F:\super\qwen38mtp'
+ROOT = r'F:\super\qwen27b'
 OUT = r'F:\super\tmp\_claude_e2e.txt'
 fh = io.open(OUT, 'w', encoding='utf-8')
 

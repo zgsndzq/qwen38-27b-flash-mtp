@@ -57,6 +57,13 @@ def fill_sys(text):
                 .replace("{weekday}", "一二三四五六日"[d.weekday()]))
 
 
+def _seed_messages(sys_prompt):
+    """开新上下文的消息表：有 system 才放 system（--no-sys 时是空表）。"""
+    if sys_prompt is None:
+        return []
+    return [{"role": "system", "content": sys_prompt}]
+
+
 DEFAULT_TIMEOUT = float(os.environ.get("LLAMA_CHAT_TIMEOUT", "600"))
 CTX_LIMIT = int(os.environ.get("LLAMA_CHAT_CTX", "32768"))   # 仅用于水位提示
 
@@ -65,8 +72,8 @@ CLEAR_CMDS = ("clear", "/clear", "cls", "/cls", "清空", "清除上下文")
 PASTE_CMDS = ("/paste", "/多行")
 END_CMDS = ("/end", ":::end")
 
-# 输出被重定向到文件时，用 UTF-8 写，避免 Windows 默认 cp936 把中文写坏。
-# 终端（TTY）不动，交给 Python 的 console writer 处理。
+# When stdout is a file, force UTF-8: Windows' default cp936 mangles non-ASCII.
+# A real TTY is left alone for Python's console writer.
 if not sys.stdout.isatty():
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -75,7 +82,7 @@ if not sys.stdout.isatty():
 
 
 # --------------------------------------------------------------------------
-# 交互输入（沿用 llm/cli/input_box.py 的行为，可选依赖 prompt_toolkit）
+# Interactive input. prompt_toolkit is optional; falls back to plain input().
 # --------------------------------------------------------------------------
 try:
     from prompt_toolkit import PromptSession
@@ -163,7 +170,7 @@ def stream_printer(hide_thinking=False):
 
 
 # --------------------------------------------------------------------------
-# llama-server 调用（把 llm/engine/gguf_client.py 的流式核心内联进来）
+# llama-server client: streaming core inlined, stdlib only.
 # --------------------------------------------------------------------------
 def probe(base_url, timeout=5.0):
     """/v1/models 探活。返回 (ok, 服务端报的模型 id 或 None, 错误)。"""
@@ -272,6 +279,8 @@ def _build_parser():
     ap.add_argument("--sys", default=None, help="system prompt（默认内置中文提示词）")
     ap.add_argument("--sys-file", default=None,
                     help="从 UTF-8 文本文件读 system prompt（优先于 --sys）")
+    ap.add_argument("--no-sys", action="store_true",
+                    help="完全不下发 system 消息：前缀里只有用户消息（纯模型调用）")
     ap.add_argument("--temp", type=float, default=None,
                     help="采样温度；不给 = 不下发，沿用服务端 --temp")
     ap.add_argument("--think", choices=["on", "off", "server"], default="on",
@@ -302,61 +311,64 @@ def _build_parser():
 
 
 # --------------------------------------------------------------------------
-# 记忆体（POC 起于 2026-09-25；2026-09-26 判决：**主载体用自然语言**）
+# Memory. Source is whatever sits in mem\\ (text files and images): change the
+# files, not the code. It is written into THIS turn's content only and never into
+# message history, so later turns are unaffected.
 #
-#   条目格式   **自然语言**（推荐）。一份正常的说明文档就对了：
-#                概述 → 分节细节 → 示例 → 例外，分层写，同一件事可以换句话
-#                再说一遍（冗余是特性不是浪费）。理由：AI 是自然语言模型，
-#                它的全部先验都在自然语言里；四元组是一套它没见过的记号，
-#                读进来要先翻译一遍，而且"一行一事实"的格式天然禁止把同一
-#                事实换个说法重述——那恰恰是最有效的加固手段。
-#              实测（redundancy_ab，14 题×6 臂）：六行四元组骨架 0.787/11 命中，
-#                改写成自然语言逐条展开 0.922/14 命中 ⇒ 赢的是表述方式与覆盖。
-#              四元组（.quads）保留可用，它适合"一行一事实"的精确数字/坐标表。
-#   存储位置   mem\ 下任意文本文件（.md 推荐 / .txt / .quads），递归；文件名随意
-#   记忆来源   mem\ 下的文本（文本记忆）和图片（视觉记忆）—— 里面有什么就用什么，
-#              换内容只需要换 mem 里的文件，不用改代码、不用复制
-#   注入方式   改写**本轮** user content，不进 messages 历史 ⇒ 不污染后续轮
+# Use prose, not records. Measured on redundancy_ab (14 questions x 6 arms): a
+# six-line quad skeleton scored 0.787 / 11 hits, the same facts as prose scored
+# 0.922 / 14 hits. Prose wins because the model's priors live in natural language,
+# and a "one fact per line" format structurally forbids restating a fact in other
+# words - which is the strongest reinforcement available.
 #
-# 端到端链路：用户提问 → 加载 mem 里的记忆 → inject() 把记忆本体拼进本轮 content
+#   Layout    any text file under mem\, read recursively (.md recommended;
+#             .txt and .quads also work). File names do not matter.
+#             .quads is kept for exact number/coordinate tables, one fact per line.
+#   Images    any image under mem\ is a vision-memory candidate.
+#   Inject    rewrites this turn's user content; never enters messages history.
+#
+# End to end: user asks -> memory loaded from mem\\ -> inject() splices the memory
+# body into this turn's content.
 # --------------------------------------------------------------------------
 MEM_DIR = Path(__file__).resolve().with_name("mem")
 
-# 文本记忆 = mem\ 下所有文本文件（递归）。换内容 = 换 mem 里那个文件，不用改代码。
-# 格式不写死：.md 是推荐载体，.quads 是历史格式（精确表场景），两者都能读。
+# Text memory = every text file under mem\, recursively.
 TEXT_SUFFIX = (".md", ".markdown", ".txt", ".quads")
 
-# 注入的只有记忆本体：整段用 <knowledge> 圈起来，此外**一个字都不加**。
-# 不写"下面是…记忆"、不写"以它为准"、不写"用户问题："、不写"必须…" —— 任何框架语、
-# 分隔线、指令句都是在注入提示词，不是在注入记忆（模板一加，模型就去执行模板而不是照记忆）。
-# 顺序：**用户原话在最前（任务是第一优先），记忆作为参考跟在后面**；然后是
-# 文本在前、图在后（同一轮 content：用户原话 → knowledge → image）。
+# Only the raw memory goes in, wrapped in <knowledge> and nothing else. No lead-in
+# ("here is your memory"), no "follow this", no "the user asks:" - any framing text
+# makes the model execute the framing instead of reading the memory.
+# Order: user's own words first (the task has priority), memory after as reference;
+# within the turn: original text -> <knowledge> -> image.
 KNOW_OPEN = "<knowledge>"
 KNOW_CLOSE = "</knowledge>"
 
 
 # --------------------------------------------------------------------------
-#   记忆开关 —— 就这一个变量，改数字就能切换，A/B 直接对比
-#     0 = 无记忆      纯基线，什么都不注入
-#     1 = 文本记忆    只注入 mem\ 下的文本文件（.md 推荐，四元组 .quads 也可）
-#     2 = 图像记忆    只注入 mem\ 下那张图（视觉 token）        ← 当前启用
-#     3 = 混合记忆    图 + 文本一起给
-#                     ⚠ 实测两者会打架：判据题从 0.47 掉到 0.33，模型被文本
-#                     记忆拉回标准开局 ⇒ 同一事实别两种形态同时给
-#   不想改文件就临时用环境变量覆盖：  set LLAMA_CHAT_MEM=1
+#   MEM_MODE  the single switch; change the number to A/B compare.
+#     0 = none      pure baseline, nothing injected
+#     1 = text      text files under mem\ only
+#     2 = vision    a single image from mem\ (vision tokens)     <- current
+#     3 = mixed     image + text together
+#                   WARNING measured to fight itself: the JEV probe drops from
+#                   0.47 to 0.33 - the text pulls the model back to a standard
+#                   opening. Never give one fact in two shapes at once.
+#   Override without editing:   set LLAMA_CHAT_MEM=1
 # --------------------------------------------------------------------------
 try:
     MEM_MODE = int(os.environ.get("LLAMA_CHAT_MEM", "2"))
 except ValueError:          # env 被写坏（空串/非数字）时退回默认，别崩在这
     MEM_MODE = 2
 
-# 视觉记忆 = mem\ 下所有图片（递归）。不复制、不放别处：换内容就换 mem 里那张图。
+# Vision memory = every image under mem\, recursively. No copies anywhere else.
 IMG_SUFFIX = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 
-# 历史里是否保留图：True = 发出去的带图消息原样留在上下文里，后续轮次（"换个颜色"/"再改改"）
-# 模型还看得见，不会变瞎。
-# ⚠️ 不要"把旧图退化成占位文字"：改写已发出的历史 ⇒ prompt cache 全废 ⇒ 每轮全量重 prefill
-#    （实测表观吞吐掉到 ~5 t/s）。代价是图会累积，靠 [ctx 水位] 提示盯着。
+# Keep images in history: the message that was sent stays in the context verbatim,
+# so the model can still see the picture on later turns ("change the colour").
+# Do NOT replace old images with placeholder text: rewriting an already-sent message
+# invalidates the whole prompt cache and re-prefills everything each turn (measured
+# apparent throughput falls to ~5 t/s). The price of keeping them is that images
+# accumulate - watch the [ctx] watermark.
 VISION_KEEP = True
 
 
@@ -428,10 +440,15 @@ def inject(user_text, hits):
 def main(argv=None):
     a = _build_parser().parse_args(argv)
 
-    if a.sys_file:
+    if a.no_sys:
+        # Pure model call: build no system message and read no sys file.
+        # None means "no system" - an empty string would fall back to DEFAULT_SYS
+        # through `a.sys or DEFAULT_SYS`.
+        sys_prompt = None
+    elif a.sys_file:
         try:
-            # utf-8-sig：记事本另存为 UTF-8 with BOM 时自动剥掉 BOM，
-            # 否则 BOM 会混进 system prompt 开头。
+            # utf-8-sig: strip the BOM that Notepad writes for "UTF-8 with BOM",
+            # otherwise it ends up at the front of the system prompt.
             with open(a.sys_file, encoding="utf-8-sig") as f:
                 sys_prompt = f.read().strip()
         except OSError as e:
@@ -443,13 +460,14 @@ def main(argv=None):
     else:
         sys_prompt = a.sys or DEFAULT_SYS
 
-    sys_prompt = fill_sys(sys_prompt)      # {date} / {weekday}
+    if sys_prompt is not None:
+        sys_prompt = fill_sys(sys_prompt)  # {date} / {weekday}
 
     think_flag = _parse_think(a.think)
     timeout = a.timeout or DEFAULT_TIMEOUT
     base_url = a.base_url.rstrip("/")
 
-    # 启动探活 + 显示服务端实际加载的模型
+    # Probe the server and show the model it actually loaded.
     ok, model_id, err = probe(base_url)
     think_txt = ("服务端默认" if think_flag is None else ("开" if think_flag else "关"))
     print(f"底座: {base_url}  "
@@ -460,7 +478,7 @@ def main(argv=None):
     else:
         print(f"[警告] 探活失败：{err}\n       （先双击 llmserver.bat / llmchat 对应的服务端再试）")
 
-    print(f"\nsystem: {sys_prompt}")
+    print("\nsystem: %s" % (sys_prompt if sys_prompt is not None else "(无 — 纯模型调用)"))
     tip = ("粘贴大段文档自动整块提交；Esc+Enter 回车换行"
            if (_HAS_TUI and sys.stdin.isatty() and not a.no_tui)
            else "输入 '/paste' 粘贴大段文档")
@@ -470,10 +488,10 @@ def main(argv=None):
     if _HAS_TUI and sys.stdin.isatty() and not a.no_tui:
         session = _new_session()
 
-    messages = [{"role": "system", "content": sys_prompt}]
+    messages = _seed_messages(sys_prompt)
     mem_done = False        # 记忆只注入首轮（clear 后重置）
 
-    # 记忆库：MEM_MODE 决定装哪一类；文本记忆还受 --mem 控制
+    # MEM_MODE picks the kind; text memory is additionally gated by --mem.
     use_text = MEM_MODE in (1, 3)
     use_vision = MEM_MODE in (2, 3)
     _MODE_NAME = {0: "无记忆（纯基线）", 1: "文本记忆", 2: "图像记忆",
@@ -512,17 +530,20 @@ def main(argv=None):
         if meta == "exit":
             break
         if meta == "clear":
-            messages = [{"role": "system", "content": sys_prompt}]
+            messages = _seed_messages(sys_prompt)
             mem_done = False                # 清空上下文 ⇒ 允许下一轮重新做首轮注入
-            print(f"上下文已清空（保留 system prompt，历史 {len(messages) - 1} 条）\n")
+            _n_sys = 0 if sys_prompt is None else 1
+            _tail = "，无 system" if sys_prompt is None else ""
+            print(f"上下文已清空（历史 {len(messages) - _n_sys} 条{_tail}；"
+                  f"输入历史已清）\n")
             continue
 
-        # ---- 记忆注入（**只在首轮**）----
-        # 首轮： 用户原话 → <knowledge> 记忆本体 → 图，一次性写进上下文；
-        # 之后每轮只发原话，一律用普通字符串，不再附加任何记忆。
-        # 理由：已发出的前缀一字不改 ⇒ prompt cache 稳定命中，上下文结构从第一轮
-        # 起就定型；记忆也不会随轮数重复堆积。记忆仍在历史里，模型每轮都看得见。
-        # 要换记忆内容：clear 后重来（或重开会话）。
+        # ---- memory injection: FIRST TURN ONLY ----
+        # Turn 1 writes user text -> <knowledge> -> image into the context once.
+        # Later turns send the user's words alone, as a plain string, with no memory
+        # attached. Reason: an unchanged prefix keeps the prompt cache hit every turn,
+        # and the memory never piles up. It stays in history, so the model still sees
+        # it. To change the memory, clear (or restart the session).
         t_keys = []
         if mem_done:
             sent, keys = user, []
@@ -548,7 +569,8 @@ def main(argv=None):
             print("[记忆未命中] 首轮不注入\n")
         mem_done = True
 
-        # 历史里存的是"实际发出去的那一版"：首轮带记忆本体/图，之后每轮就是原话。
+        # History keeps exactly what was sent: memory + image on turn 1, plain
+        # user text afterwards.
         sent_msgs = messages + [{"role": "user", "content": sent}]
         try:
             printer = stream_printer(hide_thinking=a.hide_thinking)
@@ -566,19 +588,21 @@ def main(argv=None):
         else:
             print(f"\n底座> {content}")
 
-        # 回传思考块：服务端 --reasoning-preserve 生效的前提是客户端先把它发回去。
-        # 视觉记忆留在历史里（否则"换个颜色""再改改"时模型已经看不见图了）。
-        # 存进历史的一律是"实际发出去的那一版"，且此后永不改写 —— 改写已发出的消息会让
-        # prompt cache 当轮全废、每轮全量重 prefill（实测表观吞吐掉到 ~5 t/s）。代价是
-        # 图会累积，靠 [ctx 水位] 提示盯着，必要时 clear 重来。
+        # Send the thinking block back: the server's --reasoning-preserve only works
+        # if the client returns it. Images stay in history so later turns can still
+        # see them. What goes into history is always the version that was actually
+        # sent, and it is never rewritten afterwards - rewriting a sent message
+        # destroys the prompt cache and re-prefills every turn (~5 t/s measured).
         if VISION_KEEP and isinstance(sent, list):
             messages.append({"role": "user", "content": sent})
         else:
             messages.append({"role": "user", "content": user})
-        # 思考块默认【不进历史】：它每轮都要吃掉整个思考长度（预算 4096 ⇒ 每轮 4096 tok），
-        # 而下一轮模型真正需要的是自己说过的答案。不回传让上下文每轮只增长"输入+答案"，
-        # 长会话的轮数直接翻几倍；前缀从第一轮起就固定，prompt cache 不受影响。
-        # 思考过程照常流式打印，只是不留在历史里（--keep-thinking 恢复旧行为）。
+        # The thinking block does NOT go into history by default: it costs its full
+        # length every turn (budget 4096 -> 4096 tokens/turn), while the next turn
+        # only really needs the answer. Dropping it means the context grows by
+        # input+answer per turn, which multiplies how many turns fit in a session;
+        # the prefix is fixed from turn 1 so the prompt cache still hits.
+        # It is still streamed to the screen; --keep-thinking restores the old way.
         assistant = {"role": "assistant", "content": content}
         if reasoning and a.keep_thinking:
             assistant["reasoning_content"] = reasoning
@@ -594,9 +618,9 @@ def main(argv=None):
         ctx = (timings.get("prompt_n") or 0) + (timings.get("cache_n") or 0)
         if ctx:
             print(f"  [ctx {ctx} tok · 水位 {100.0 * ctx / CTX_LIMIT:.0f}%]")
-        # 速度：服务端 timings 里本来就有，之前只取了 prompt_n/cache_n 算水位，
-        # 速度从没打印过 —— llmserver 只把它打在自己那个窗口里，这里看不到。
-        # pp = 预填充（每轮新增的 prompt），tg = 逐字生成，就是体感速度。
+        # Speed: the server already reports it in timings, but the launcher only
+        # prints it in its own window. pp = prefill (new prompt this turn),
+        # tg = token generation, which is the speed you actually feel.
         pp = timings.get("prompt_per_second")
         tg = timings.get("predicted_per_second")
         if pp or tg:

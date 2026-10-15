@@ -1,6 +1,6 @@
-# qwen38mtp → ada-q8 可移植优化普查
+# qwen27b → ada-q8 可移植优化普查
 
-日期：2026-09-28 · 目标：把 `llamAmpere_gdn`（qwen38mtp 的 fork）做过的优化逐条对到 `ada-q8`（Bonsai-2-27B PTQ1_0）上，判定哪些真能提速。
+日期：2026-09-28 · 目标：把 `llamAmpere_gdn`（qwen27b 的 fork）做过的优化逐条对到 `ada-q8`（Bonsai-2-27B PTQ1_0）上，判定哪些真能提速。
 
 方法：命令行选项集合做差集；两个 fork 的关键文件出 diff；CUDA 内核清单做差集后逐个判读量化类型/架构绑定。
 
@@ -8,7 +8,7 @@
 
 ## 0. 结论先行
 
-**两个项目跑的是同一个模型。** `adaq8\models` 是 NTFS junction，指向 `qwen38mtp\models`，
+**两个项目跑的是同一个模型。** `adaq8\models` 是 NTFS junction，指向 `qwen27b\models`，
 物理上是同一份 `Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf`（6,212,666,848 字节，同一 inode）。
 
 GGUF 元数据（`tools/_gguf_meta.py` 直读 header）：
@@ -56,7 +56,7 @@ Bonsai 为 dense。**实际适用**，已移到 §3.4。
 
 接受率反而是自适应更高（0.469 / 0.425 / 0.459 vs 0.398 / 0.403 / 0.468），但深度被压到 2.1–2.3，两者抵消。
 
-⇒ **ada-q8 上固定深度 3 已在最优点附近，自适应没有地板可兜。** 与 qwen38mtp 的结论相反（那边中文掉词严重）。原因：ada-q8 的短表是 pass-2 mix 表，中文覆盖率 98.9%，不存在"掉词"这个自适应要修的病。
+⇒ **ada-q8 上固定深度 3 已在最优点附近，自适应没有地板可兜。** 与 qwen27b 的结论相反（那边中文掉词严重）。原因：ada-q8 的短表是 pass-2 mix 表，中文覆盖率 98.9%，不存在"掉词"这个自适应要修的病。
 
 **处置：保留代码（不删），生产 launcher 继续 `draft-mtp`。**
 

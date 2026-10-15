@@ -754,7 +754,7 @@ async function health(){
       el.innerHTML = '<i></i>模型在线' + (nm ? '<span class="sep">·</span><span class="nm" title="' + nm + '">' + nm + '</span>' : '');
     }else{
       el.className = 'status bad'; el.innerHTML = '<i></i>18080 未响应';
-      showBanner('warn','18080 上没有在跑的服务 —— 先双击 qwen38mtp\\llmserver.bat，等它加载完（约 40 s）再回到本页。');
+      showBanner('warn','18080 上没有在跑的服务 —— 先双击 qwen27b\\llmserver.bat，等它加载完（约 40 s）再回到本页。');
     }
   }catch(e){
     el.className = 'status bad'; el.innerHTML = '<i></i>桥接未响应';

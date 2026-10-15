@@ -12,7 +12,7 @@ import sys
 import time
 import urllib.request
 
-ROOT = r'F:\super\qwen38mtp'
+ROOT = r'F:\super\qwen27b'
 BIN = os.path.join(ROOT, 'bin', 'llama-server.exe')
 MODEL = os.path.join(ROOT, 'models', 'Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf')
 MAP = os.path.join(ROOT, 'maps', 'shortlist_24k_mix.vocab.txt')

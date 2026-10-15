@@ -16,8 +16,8 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent                       # ...\qwen38mtp\jev-tetris
-PKG = ROOT.parent                        # ...\qwen38mtp  (llmserver.bat lives here)
+ROOT = HERE.parent                       # ...\qwen27b\jev-tetris
+PKG = ROOT.parent                        # ...\qwen27b  (llmserver.bat lives here)
 NODE = r"C:\Users\bestd\.workbuddy\binaries\node\versions\22.22.2-3\node.exe"
 NO_WINDOW = 0x08000000
 

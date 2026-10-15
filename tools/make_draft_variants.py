@@ -45,7 +45,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "llmserver.bat"
 ARCHIVE = Path(r"F:\super\.archive")
-NAME = b'set "MODEL_NAME=Ternary-Bonsai-2-27B-SelfMTP-Q6K [qwen38mtp standalone]"'
+NAME = b'set "MODEL_NAME=Ternary-Bonsai-2-27B-SelfMTP-Q6K [qwen27b standalone]"'
 
 OLD_HEADER = (b'rem  Measured 2026-09-22 (build-gdn, 3 prompts x 3 runs, median):\r\n'
               b'rem    DRAFT=3 -> 39.22 t/s, accept 0.549     (this file ships DRAFT=3)\r\n')

@@ -2,7 +2,7 @@
 
 `python llm.py chat` 的**独立化版本**：单文件、零项目依赖、把这个文件夹拷到哪都能用。
 
-它**只负责对话**——连上一个已经跑着的 llama-server（比如 `..\qwen38mtp\llmserver.bat` 起的那个），
+它**只负责对话**——连上一个已经跑着的 llama-server（比如 `..\qwen27b\llmserver.bat` 起的那个），
 自己**不加载任何模型**。
 
 ## 怎么用
@@ -70,13 +70,13 @@ python chat.py --temp 0.6 --think on --effort medium
 
 ## 验证记录（2026-09-22）
 
-连 18080 上正在运行的 `qwen38mtp` 服务实测（管道喂脚本，非 TTY 路径）：
+连 18080 上正在运行的 `qwen27b` 服务实测（管道喂脚本，非 TTY 路径）：
 
 ```
 client argv = chat.py --base-url http://127.0.0.1:18080 --temp 0.6 --think on --effort medium --max-tokens 400
 rc = 0   elapsed = 4.8s   stderr 空
 底座: http://127.0.0.1:18080  temp=0.6  思考=开(medium)
-服务端模型: F:\super\qwen38mtp\models\Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf
+服务端模型: F:\super\qwen27b\models\Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf
 [思考] ...（思考块正常输出）
 [回答] 快速排序是一种通过选取基准元素…的分治算法。
 你> 上下文已清空（保留 system prompt，历史 0 条）      <- clear 生效
@@ -90,4 +90,4 @@ rc = 0   elapsed = 4.8s   stderr 空
 ## 依赖
 
 - Python 3（只用标准库；`prompt_toolkit` 可选）
-- 一个正在运行的 llama-server（例：`..\qwen38mtp\llmserver.bat`）
+- 一个正在运行的 llama-server（例：`..\qwen27b\llmserver.bat`）

@@ -19,7 +19,7 @@ import time
 import urllib.error
 import urllib.request
 
-ROOT = r'F:\super\qwen38mtp'
+ROOT = r'F:\super\qwen27b'
 PROD_BAT = os.path.join(ROOT, 'llmserver.bat')
 PORT = 18080
 

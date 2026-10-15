@@ -17,7 +17,7 @@ import threading
 import time
 from ctypes import wintypes
 
-ROOT = r"F:\super\qwen38mtp"
+ROOT = r"F:\super\qwen27b"
 DEFAULT_KEEP = int(os.environ.get("SRVLOG_KEEP_BYTES", str(256 * 1024)))
 
 MB = 1024.0 * 1024.0

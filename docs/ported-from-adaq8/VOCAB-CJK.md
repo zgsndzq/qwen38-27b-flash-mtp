@@ -3,7 +3,7 @@
 2026-09-28。**修订版，取代同日 13:49 的那一版。**
 
 > **修订说明**：初版标题是「短表对中文是拖慢的」，结论是 **负收益**。那个结论**建立在选错的语料上**，
-> 而且**漏掉了本项目最关键的一份文献**（`qwen38mtp\docs\VOCABMAP.md`）—— 它记录了这张表正是为了修
+> 而且**漏掉了本项目最关键的一份文献**（`qwen27b\docs\VOCABMAP.md`）—— 它记录了这张表正是为了修
 > 「中文变慢」而被重建过的。修正后结论相反。第 6 节那个发现不受影响，仍然成立。
 
 ## 一句话结论
@@ -29,14 +29,14 @@
 
 ## 2. 这张表有两代，线上是第二代（初版就是漏在这里）
 
-生成器在 `qwen38mtp\vocab\`（只读引用，未改动）：
+生成器在 `qwen27b\vocab\`（只读引用，未改动）：
 
 | 代 | 脚本 | 语料 | 实测结局 |
 |---|---|---|---|
 | pass 1 | `shortlist.py` | **纯代码**：`prompts.py` 83 条代码任务 + 代码库 | **中文 −14%**（"a code accelerator and a Chinese brake"） |
 | **pass 2（线上）** | **`mixbuild.py`** | **三池加权**：`real`（真实服务流量）3 · `talk`（中英对话）2 · `code` 2 | **中文 +7.6%**（zh.explain 26.18 → 33.98 = **+29.8%**） |
 
-- 线上表 md5 `1282836DBF1C`，与 `qwen38mtp\maps\` 下同名文件**逐字节相同** ⇒ 就是 pass 2 那张。
+- 线上表 md5 `1282836DBF1C`，与 `qwen27b\maps\` 下同名文件**逐字节相同** ⇒ 就是 pass 2 那张。
 - pass 1 那张已归档：`.archive\20260922-mixmap\shortlist_24k_codeonly.vocab.txt`。
 - `VOCABMAP.md` 原话：*"Pass 1's map was not merely neutral on Chinese — it was **−14% against having no map at all**."*
   以及 *"Two consequences: ① The shipped config makes Chinese chat slower … ② …"* —— 但那是 **pass 1 当天的记录**，
@@ -82,7 +82,7 @@ snake_case 片段。汉字席位高度集中在前 9600 名（3 104/3 181 = 97.6
 分词器两条独立实现互校：自建 BPE 与 HF `tokenizers 0.23.2` 在 400 条随机中英混排串上 **400/400 一致**
 （`tools\_tok_cn3.py`）。id 与 GGUF 词表对齐已逐一核对（`tools\_tok_check.py`，248 044 项 MATCH）。
 
-### 4.1 权威语料 —— `qwen38mtp\vocab\corpus\ids`（6 074 个分词样本，就是 VOCABMAP 用的那份）
+### 4.1 权威语料 —— `qwen27b\vocab\corpus\ids`（6 074 个分词样本，就是 VOCABMAP 用的那份）
 
 | 组 | tokens | 覆盖率 | 其中 CJK 覆盖率 |
 |---|---:|---:|---:|
@@ -97,7 +97,7 @@ snake_case 片段。汉字席位高度集中在前 9600 名（3 104/3 181 = 97.6
 | 语料 | tokens | 覆盖率 | 其中 CJK |
 |---|---:|---:|---:|
 | C/C++ 源码（fork/src） | 49 065 | **99.62%** | — |
-| 中文技术文档（`llm\docs` / `qwen38mtp\docs` / README / memory） | ~129 000 | **92.4%** | 82.3% |
+| 中文技术文档（`llm\docs` / `qwen27b\docs` / README / memory） | ~129 000 | **92.4%** | 82.3% |
 | 中文技术笔记（`llmchat\**\*.md` 全量 165 文件） | 28 699 | **66.27%** | **48.40%** |
 
 **为什么最后一行那么低**：`llmchat` 的笔记里混着大量**记忆饱和测试的虚构专有名词** ——
@@ -168,7 +168,7 @@ VOCABMAP 的出货配置（`real=3,talk=2,code=2` 的 mix 表 **+ adaptive depth
 |---|---|---|---|
 | **C** | **移植 `draft-mtp-adaptive` + `--spec-draft-n-min-adaptive 1`** | 改 fork 源码 + 重编 | **结构最优**：正常文本吃满短表收益，掉词多时自动把深度压到 1 兜底 |
 | A | `DRAFT_MAP=` 留空 | 一行，零风险 | 中文 q 归零，代码场景从 63 掉回 62.9（几乎无差） |
-| B | 重建更偏中文的表（`mixbuild.py` 可离线跑，池数据在 `qwen38mtp\vocab\corpus\ids`） | 跑一遍离线流程 | 折中：CJK 席位换走 ASCII 席位，两边都拿不满 |
+| B | 重建更偏中文的表（`mixbuild.py` 可离线跑，池数据在 `qwen27b\vocab\corpus\ids`） | 跑一遍离线流程 | 折中：CJK 席位换走 ASCII 席位，两边都拿不满 |
 | D | 生成器里给 CJK 强制配额 | 改生成器 + 重建表 | q 降幅有限，且挤掉 ASCII 席位 |
 
 ## 8. 复现脚本（`adaq8\tools\`）

@@ -8,7 +8,7 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
-SERVER_BAT = Path(r"F:\super\qwen38mtp\llmserver.bat")
+SERVER_BAT = Path(r"F:\super\qwen27b\llmserver.bat")
 MODEL, UI = "http://127.0.0.1:18080", "http://127.0.0.1:18090"
 
 

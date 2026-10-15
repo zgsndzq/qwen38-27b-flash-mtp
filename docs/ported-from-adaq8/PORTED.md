@@ -1,9 +1,9 @@
-# 移植记录：qwen38mtp 现在跑 adaq8 的运行时
+# 移植记录：qwen27b 现在跑 adaq8 的运行时
 
 日期：2026-09-28
 
-**一句话**：`qwen38mtp` 换上了 `adaq8` 的二进制与出餐配方。两者本来就是同一个模型
-（`adaq8\models` 是指向 `qwen38mtp\models` 的 junction），所以这次只是把落后一整代的
+**一句话**：`qwen27b` 换上了 `adaq8` 的二进制与出餐配方。两者本来就是同一个模型
+（`adaq8\models` 是指向 `qwen27b\models` 的 junction），所以这次只是把落后一整代的
 **运行时 + 配方**搬回来，模型、JEV、训练库一律没动。
 
 ---
@@ -12,8 +12,8 @@
 
 | 项目 | 来源 | 落到 |
 |---|---|---|
-| 运行时二进制 | `adaq8\bin\*.dll / *.exe` | `qwen38mtp\bin\`（ada-q8，build 462，`c8b8993a6`，sm_89） |
-| 出餐配方 | `adaq8\llmserver.bat` | `qwen38mtp\llmserver.bat`（按本项目重写，见 §3） |
+| 运行时二进制 | `adaq8\bin\*.dll / *.exe` | `qwen27b\bin\`（ada-q8，build 462，`c8b8993a6`，sm_89） |
+| 出餐配方 | `adaq8\llmserver.bat` | `qwen27b\llmserver.bat`（按本项目重写，见 §3） |
 | 草稿短表设置 | `--spec-draft-vocab-map` | 指向本项目的 `maps\shortlist_24k_mix.vocab.txt` |
 | 说明文档 | `adaq8\bench\*` | `docs\ported-from-adaq8\`（含 `adaq8-README.md`） |
 | 工具脚本 | `adaq8\tools\*` | `tools\ported-from-adaq8\`（路径已改写为本项目的） |
@@ -81,7 +81,7 @@ copy /y llmserver.bat.bak-20260928-preadaq8 llmserver.bat
 ## 6. 重建（改了 fork 之后）
 
 `tools\ported-from-adaq8\_build_adaq8.sh` 仍然把产物装到 `adaq8\bin`（脚本里的目标路径没改，
-因为 fork 是两个项目共用的）。重建后需要再手动把 `adaq8\bin\*.dll`、`*.exe` 拷到 `qwen38mtp\bin`。
+因为 fork 是两个项目共用的）。重建后需要再手动把 `adaq8\bin\*.dll`、`*.exe` 拷到 `qwen27b\bin`。
 
 ## 7. `--gdn-replay`（GDN verify tape）—— 已评估，建议不搬
 
@@ -112,10 +112,10 @@ copy /y llmserver.bat.bak-20260928-preadaq8 llmserver.bat
 | 上游那 4 个提交 | #265 ARM NEON PQ2_0 / #291 Vulkan / **#318 CUDA GDN 修复** / #304 DFlash2 opt-in lookup |
 | 对我们有效 | **只有 #318**（CUDA GDN gather ids 内存复用时的正确性修复。Bonsai-2 是 qwen35+GDN 混合架构，65 层里约 49 层 GDN） |
 | 其余三个 | ARM / Vulkan / DFlash2（我们走 CUDA + draft-mtp）**零影响** |
-| 编译 | `F:\super\qwen38mtp\ada-q8\_build_q8.bat`，`BUILD_EXIT=0`，243/243，零 error，sm_89 |
+| 编译 | `F:\super\qwen27b\ada-q8\_build_q8.bat`，`BUILD_EXIT=0`，243/243，零 error，sm_89 |
 | 验证方式 | `.obj` mtime 晚于源码（`--version` 串是 CMake configure 缓存，不可当判据） |
-| 产物 | 15 个（5 exe / 10 dll），已铺到 `build-q8\bin` + `adaq8\bin` + `qwen38mtp\bin`，**sha256 三处一致** |
-| 模型 | **无需同步** —— `adaq8\models` 是指向 `qwen38mtp\models` 的 junction，本就是同一份 |
+| 产物 | 15 个（5 exe / 10 dll），已铺到 `build-q8\bin` + `adaq8\bin` + `qwen27b\bin`，**sha256 三处一致** |
+| 模型 | **无需同步** —— `adaq8\models` 是指向 `qwen27b\models` 的 junction，本就是同一份 |
 
 ### 底座新增（Swift）
 
@@ -132,7 +132,7 @@ Swift 实测（同 prompt / 4500 token 上下文，对照旧 Ternary 底座）�
 
 ### 当前 `llmserver.bat` 与 adaq8 的 4 处差异（**有意的，不要盲目统一**）
 
-| 行 | adaq8 | qwen38mtp | 性质 |
+| 行 | adaq8 | qwen27b | 性质 |
 |---|---|---|---|
 | 底座 `-m` | `Swift-Bonsai-2-PTQ1_0-mtp.gguf` | `Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf` | 本项目仍在用旧底座做对照 |
 | `REBUDGET` | 0 | 2048 | 思考预算护栏，两边策略不同 |
@@ -145,7 +145,7 @@ Swift 实测（同 prompt / 4500 token 上下文，对照旧 Ternary 底座）�
 
 | 项 | 内容 |
 |---|---|
-| 引擎 | `adaq8\bin\*` 15 个文件 → `qwen38mtp\bin\`，**sha256 15/15 一致**（ada-q8，10-10 合并上游 `origin/prism` 后重编，含 `--features-file` 机制） |
+| 引擎 | `adaq8\bin\*` 15 个文件 → `qwen27b\bin\`，**sha256 15/15 一致**（ada-q8，10-10 合并上游 `origin/prism` 后重编，含 `--features-file` 机制） |
 | 回退点 | `bin.bak-before-adaq8sync-1010\`（15 文件 / 258M）、`llmserver.bat.bak-before-adaq8sync-1010` |
 | 底座 | 换成 adaq8 的 `Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf`（原 `Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf`） |
 | 配置机制 | 换成 `features.ini`（`--features-file`）：fork 特性全部搬进该文件，bat 只留运行时参数 |
@@ -159,7 +159,7 @@ Swift 实测（同 prompt / 4500 token 上下文，对照旧 Ternary 底座）�
 
 ### 现在 `llmserver.bat` 与 adaq8 只剩两处差异
 
-| 行 | adaq8 | qwen38mtp | 性质 |
+| 行 | adaq8 | qwen27b | 性质 |
 |---|---|---|---|
 | 文件头注释 | 指向 `docs\spec-旋钮配置与扫参.md` | 指向本文档 | 各自文档 |
 | VISION 块 | 无（只有注释） | `set "VISION=0/1"` + `%VISARG%` | 本项目独有（`jev-image` 需要） |

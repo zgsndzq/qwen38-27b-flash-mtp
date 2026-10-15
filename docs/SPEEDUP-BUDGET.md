@@ -403,7 +403,7 @@ idle **7036 MiB**、agent.long **38.90**、chat.prose **36.34**、judge ptps 484
 
 **① 改哪个 `.cpp` 就抄哪个 DLL**（`ninja llama-server` 只重链受影响的目标）：
 
-| 改的文件 | 更新的产物 | 抄进 `qwen38mtp\bin\` |
+| 改的文件 | 更新的产物 | 抄进 `qwen27b\bin\` |
 |---|---|---|
 | `common/speculative.cpp` | `build-gdn\bin\llama-common.dll` | `llama-common.dll` |
 | `tools/server/server-context.cpp` | `build-gdn\bin\llama-server-impl.dll` | `llama-server-impl.dll` |

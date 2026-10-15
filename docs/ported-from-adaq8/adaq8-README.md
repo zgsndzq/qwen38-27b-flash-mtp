@@ -1,19 +1,19 @@
 # adaq8 — 独立实验项目（Ada 内核手术栈）
 
-**本目录与 `..\qwen38mtp` 是两个独立项目。`qwen38mtp` 一个字节都不改。**
+**本目录与 `..\qwen27b` 是两个独立项目。`qwen27b` 一个字节都不改。**
 
 ## 这是什么
 
 把 `professorpalmer` 的 **bonsai-q8-product**（他的「最新最全」分支）单独跑起来，
-用**和 qwen38mtp 完全一样的 llmserver / llmchat 双 bat 模式**，并按**他公布的配方**调到位。
+用**和 qwen27b 完全一样的 llmserver / llmchat 双 bat 模式**，并按**他公布的配方**调到位。
 
 | | 内容 |
 |---|---|
 | 上游 fork | `https://github.com/professorpalmer/llama.cpp-ada-ternary`，分支 `bonsai-q8-product` |
 | commit | `c8b8993a6` → `version: 0.2.0-dev (build 462)` |
 | 参考配方 | `https://github.com/professorpalmer/bonsai-ada-surgery`（README 的 Windows 旋钮 + Linux 参考命令） |
-| 源码 worktree | `F:\super\qwen38mtp\ada-q8`（git worktree，base = PrismML `9a9394a`） |
-| 构建目录 | `F:\super\qwen38mtp\ada-q8\build-q8`（`CMAKE_CUDA_ARCHITECTURES=89` = Ada sm_89） |
+| 源码 worktree | `F:\super\qwen27b\ada-q8`（git worktree，base = PrismML `9a9394a`） |
+| 构建目录 | `F:\super\qwen27b\ada-q8\build-q8`（`CMAKE_CUDA_ARCHITECTURES=89` = Ada sm_89） |
 | 本机 GPU | RTX 4060 Laptop 8 GB，compute_cap **8.9 = Ada**，带宽 **256 GB/s**（他们的测试卡 RTX 4070 同为 Ada，504 GB/s） |
 
 ## 实测结果
@@ -42,7 +42,7 @@
 `temp 0.6 / top-k 20 / min-p 0`；`ggml-cuda/mmvq.cu` 管 PTQ1_0 的 PT-vs-MMQ 交叉点 5。
 改完必须重编：`bash tools/_build_adaq8.sh`。
 
-## 目录结构（镜像 qwen38mtp 的模式）
+## 目录结构（镜像 qwen27b 的模式）
 
 ```
 adaq8\
@@ -50,8 +50,8 @@ adaq8\
   bin\                   <- 真副本：ada-q8\build-q8\bin（12 个文件，含 ggml-cuda.dll 241 MB）
   calib\                 <- 真副本：kv-bias 校准 + corpus（只有 KV=q4_0 时才用）
   maps\                  <- 真副本：shortlist_24k_mix.vocab.txt（我们私有补丁的资产，他们的树用不上）
-  models\                <- junction -> ..\qwen38mtp\models   （6.4 GB，不复制）
-  cuda\                  <- junction -> ..\qwen38mtp\cuda     （698 MB，不复制）
+  models\                <- junction -> ..\qwen27b\models   （6.4 GB，不复制）
+  cuda\                  <- junction -> ..\qwen27b\cuda     （698 MB，不复制）
   llmchat\               <- 客户端模式整套
     chat.py              <- 与主项目逐字节相同（md5 已校验）
     llmchat.bat          <- :18080
@@ -67,7 +67,7 @@ adaq8\
   archive\2026-09-28-wrapup\  <- 一次性产物：bat/bin/fork 备份、探针、补丁脚本、逐臂日志
 ```
 
-## 配置与 qwen38mtp 的差异
+## 配置与 qwen27b 的差异
 
 ### ① 私有开关：短表**已经移植进来了**（不再是「删」）
 
@@ -84,7 +84,7 @@ adaq8\
 
 ### ② 按他们的配方改掉的部分（都实测过）
 
-| 项 | qwen38mtp | adaq8 | 为什么 |
+| 项 | qwen27b | adaq8 | 为什么 |
 |---|---|---|---|
 | K/V 精度 | `-ctk/-ctv q4_0` + `--kv-mean-center` 校准 | **`-ctk/-ctv q8_0`**，不挂校准 | 他们的原话：q4_0 翻转的 top token 是 q8_0 的 **12 倍**；而速度上两者打平（18.01 vs 18.28 轮/s） |
 | KV 旋转 | `LLAMA_ATTN_ROT_DISABLE=1` 强制关 | **开着**（默认） | 那个 env 是校准文件的配套要求，挂了校准就没有理由关掉这个质量特性 |
