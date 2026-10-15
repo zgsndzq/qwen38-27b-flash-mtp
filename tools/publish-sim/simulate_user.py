@@ -17,8 +17,9 @@ print("   已建")
 
 # ---------- 1. 从 Releases 下载解包 ----------
 hr("1) [用户动作] 下载 release zip 并解包")
-zp = os.path.join(REL, "ada-ternary-win64-sm89-b3e7c012.zip")
-print("   下载 ada-ternary-win64-sm89-b3e7c012.zip  (%.0f MB)" % (os.path.getsize(zp)/2**20))
+zp = sorted(os.path.join(REL, f) for f in os.listdir(REL)
+            if f.startswith("ada-ternary-win64") and f.endswith(".zip"))[-1]
+print("   下载 %s  (%.0f MB)" % (os.path.basename(zp), os.path.getsize(zp)/2**20))
 t0 = time.time()
 with zipfile.ZipFile(zp) as z:
     z.extractall(DUAN)

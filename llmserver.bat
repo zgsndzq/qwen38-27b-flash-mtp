@@ -30,10 +30,16 @@ rem a stale instance keeps :18080 and its VRAM, so kill it before binding again.
 taskkill /F /IM llama-server.exe >nul 2>nul
 ping -n 3 127.0.0.1 >nul
 
-rem vision projector for jev-image. VISION=1 mounts it, 0 leaves it off.
+rem vision projector. VISION=1 mounts it, but only when the file is actually there.
+rem Without mmproj the server refuses every image request, so mount what exists only.
 set "VISION=1"
+set "MMPROJ=%~dp0weights\mmproj-Qwen3.8-27B-Q8_0.gguf"
 set "VISARG="
-if "%VISION%"=="1" set "VISARG=--mmproj "%~dp0weights\mmproj-Qwen3.8-27B-Q8_0.gguf" --image-min-tokens 1024"
+if "%VISION%"=="1" if exist "%MMPROJ%" (
+  set "VISARG=--mmproj "%MMPROJ%" --image-min-tokens 1024"
+) else (
+  echo [warn] %MMPROJ% not found - starting without vision
+)
 
 "%~dp0build\bin\llama-server.exe" -m "%~dp0weights\%MODEL%" ^
   --host 127.0.0.1 --port 18080 --parallel 1 -rea off --no-ui ^

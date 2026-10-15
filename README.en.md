@@ -1,213 +1,150 @@
-# qwen27b — Ternary-Bonsai-2-27B (PTQ1_0 + MTP) standalone runtime package
+# ada-ternary — Ternary-Bonsai-2-27B runtime package
 
-A **self-contained** inference package: everything needed to run `llmserver.bat` lives
-inside this folder. Copy the folder to any drive on any Windows x64 machine and it runs
-**with just an NVIDIA driver** — no CUDA Toolkit needed, the CUDA runtime ships with it.
+A ternary-quantised (`PTQ1_0`) Bonsai-2 27B with an **integrated MTP draft head**.
+5.8 GB of weights, runs on an **8 GB consumer GPU**, measured 60–80 t/s.
 
-There are **no absolute paths inside the package**; the launcher addresses everything
-relative to `%~dp0`.
+The engine is a fork of `PrismML-Eng/llama.cpp` — **stock llama.cpp cannot run this model**.
+Both the `PTQ1_0` tensor type and the MTP draft context exist only in this fork.
 
----
-
-## Startup: two files
-
-| File | Role |
-|---|---|
-| `llmserver.bat` | **The only launcher.** Holds plain engine arguments (`-c -b -t -ngl -fa -rea --spec-type --alias`). |
-| `features.ini` | **The only feature entry point.** Holds everything the upstream engine does not know about: our fork's switches (`spec-draft-*`, `kv-vram-cells`, `kq-mask-packed`, ...) and all `GGML_CUDA_*` / `LLAMA_*` environment variables. |
-
-The launcher passes `--features-file "%~dp0features.ini"` and **the engine reads it itself**.
-So: change our features in `features.ini`, change the model / port / context in `llmserver.bat`.
-An explicit command-line argument always **wins over** `features.ini`.
-
-Experimental variants (fixed depth / nomap / lv4 / various draft depths) live in
-`tools\_variants\`, **not** in the package root.
+> 中文版见 `README.md`
 
 ---
 
-## Current recipe (2026-10-11)
+## 1. Three places to download from
 
-| Item | Value | Where |
-|---|---|---|
-| Base model | `Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf` (in `weights\`) | `llmserver.bat` → `MODEL` |
-| Vision head | `mmproj-Qwen3.8-27B-Q8_0.gguf` (mounted when `VISION=1`) | `llmserver.bat` |
-| Context | `-c 65536` | `llmserver.bat` → `CTX` |
-| Speculation | `--spec-type draft-mtp-adaptive` + `--spec-draft-n-max 4` | `llmserver.bat` |
-| Thinking | `-rea off` (client can override via `chat_template_kwargs`) + `--reasoning-budget 2048` | `llmserver.bat` |
-| Sampling | request temperature 0.6 (client `llmchat.bat --temp`) | client |
-| KV cache | `q8_0` + tiered: `kv-vram-cells = 32768` (the rest reads from pinned RAM) | `features.ini` |
-| Draft sampling | `spec-draft-sampling = probabilistic` (true sampling + rejection) | `features.ini` |
-| Draft shortlist | `spec-draft-vocab-map = maps/shortlist_24k_mix.vocab.txt` (24k rows) | `features.ini` |
-| Adaptive floor | `spec-draft-n-min-adaptive = 1` (ceiling is `--spec-draft-n-max 4`) | `features.ini` |
-| Device pool | `GGML_CUDA_SHARED_POOL = 1` (target + draft share one pool; saves ~1.4 GB on an 8 GB card; **only safe with `--parallel 1`**) | `features.ini` |
-| #189 short query | `GGML_CUDA_FA_SHORTQ_MMA = 0` (ignore upstream #189, keep the in-place q8_0 fast path) | `features.ini` |
+This is not one archive. It is three separate downloads:
 
-⚠️ Bound to `--parallel 1`: one slot serves one session. Do **not** run two servers on the
-same card — they fight over the port and the VRAM.
+| From | What | Size | Required |
+|---|---|---|---|
+| **Hugging Face** → `Ternary-Bonsai-2-27B-PTQ1_0-GGUF` | weights `*.gguf` | 5.8 GB (one model) | **yes** |
+| **GitHub Releases** → `ada-ternary-win64-sm89-<commit>.zip` | prebuilt binaries + CUDA runtime + this package | 568 MB | unless you build it yourself |
+| **GitHub source** → `llama.cpp-ada-ternary` | engine source | 350 MB | only if you want to build |
+
+**Required engine commit: `b3e7c012c` or newer on a `sync-up-*` branch.** A mismatch fails at load time.
 
 ---
 
-## Directory layout (split by nature, 2026-10-13)
+## 2. Layout
 
-One table for the top level; five kinds of thing go five ways — **Git follows only the code kind**:
+Unzip the release archive and drop the weights in:
 
-| Path | Nature | In Git | Size | Distribution |
-|---|---|---|---|---|
-| `llmserver.bat` | run entry point (comments **must be pure ASCII**, see "Maintenance") | ✅ | 3 KB | Git |
-| `features.ini` | **the only feature config** (English comments) | ✅ | 5 KB | Git |
-| `maps\` | production draft shortlist (24k rows) | ✅ | 136 KB | Git |
-| `llmchat\` | chat client (`chat.py` + launcher + `mem\`) | ✅ | 2.0 MB | Git |
-| `apps\` | graphical apps: `jev-image\` (incl. `skill-chess-board.md`), `jev-tetris\` | ✅ | 1.5 MB | Git |
-| `engine\` | engine-side archive: PTQ1 build scripts / `_dflash_bonsai.patch` / handover docs | ✅ | 141 KB | Git |
-| `docs\` | measurement logs, design notes, port records | ✅ | 232 KB | Git |
-| `tools\` | measurement scripts + `_variants\` (archived variants) | ✅ | ~330 KB | Git |
-| `weights\` | 6 gguf files (current base + alternates + mmproj) | ❌ | 30 GB | **Hugging Face** |
-| `build\bin\` | `llama-server.exe` + all dlls | ❌ | 331 MB | **GitHub Releases** |
-| `build\cuda\` | CUDA runtime (cublas / cublasLt / cudart / nvrtc / nvJitLink) | ❌ | 697 MB | same release |
-| `train\` | training work: `ternary\` `trainlib\` `vocab\` `calib\` `cute-triadic-gdn\` | partial | 3.1 GB | code→Git, corpora→HF |
-| `data\huggingface\` | data preparation work | ❌ | 2.0 GB | **HF dataset** |
-
-≈ **36 GB** in total, but **Git tracks only 125 files / 3.2 MB** — the big things are all in
-`.gitignore`, each with its own channel, so `git status` only ever shows source and config.
-
-⚠️ **The engine source is not in here.** It lives in `code\`
-(a fork of `PrismML-Eng/llama.cpp`); this package only **consumes** its build output
-(`build\bin\`).
-
----
-
-## Relationship to `..\adaq8\`
-
-`adaq8\` is an **old copy of this package plus an ARC evaluation workspace**. It runs the
-same engine and the same gguf. Since 2026-10-13 **this package is the only main repo**
-(`adaq8\` has no `.git` of its own):
-
-- `adaq8\weights` and `adaq8\build\*` should become junctions pointing here, so weights and
-  the CUDA runtime exist only once on the machine;
-- engine sync direction: `adaq8\build\bin\*` → this package's `build\bin\` (done 2026-10-13,
-  sha256 **15/15 identical**);
-- `features.ini` is byte-identical on both sides; `llmserver.bat` differs only by this
-  project's `VISION` block;
-- the ngram knobs are unified at `NMATCH=24 / NGMIN=24`.
-
-**Before removing `adaq8\`, relocate the three things only it has** — `train\ternary\`,
-`data\huggingface\`, `train\cute-triadic-gdn\`. None of them belongs to this package.
-
-The full port/sync record and rollback steps are in `docs\ported-from-adaq8\PORTED.md`.
-
----
-
-## Tools (`tools\`)
-
-| Tool | Purpose |
-|---|---|
-| `bat_audit.py` | **read-only** health check: non-ASCII / CRLF / BOM / GBK damage; `--diff a.bat b.bat` prints the **real command-line difference** (does not trust comments) |
-| `ab_bench.py` | A/B any two launcher variants in one command: `--bat a.bat --bat b.bat`; starts the server, waits for `/health` 200, reports medians and a **zero-overlap verdict** |
-| `mtp_head_probe.py` | zero-dependency minimal GGUF reader: vocab count, first tensor names/types, `prism.hadamard.*` — predicts whether a feature can attach to a model |
-| `think_ab.py` | per-token throughput, thinking on vs off |
-| `ctx_ab.py` | decode speed by context length; measures how much KV was reused (`cache_n`) |
-| `gen_profile.py` | per-segment speed within one answer, aligned on the same time axis as `nvidia-smi` sampling — decides "blame the model or the GPU" |
-| `keep_reasoning.py` | measures the real cost of keeping the thinking block across turns |
-| `_variants\` | archived launcher variants (incl. the clean baseline arm `llmserver-nomap.bat`) |
-| `ported-from-adaq8\` | probe scripts ported from adaq8 (network capture / endpoint checks) |
-
-```bat
-cd F:\super\qwen27b\tools
-python bat_audit.py
-python ab_bench.py --bat llmserver.bat --prompts scenes --runs 5 --tag mytest
-python gen_profile.py --pad 0,2000 --max-tokens 2560 --width 128
-python mtp_head_probe.py ..\weights\Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf
+```
+ada-ternary\
+├── build\
+│   ├── bin\            llama-server.exe + all dlls (included in the zip)
+│   └── cuda\bin\       CUDA runtime  (included - you do NOT need the CUDA Toolkit)
+├── weights\            ★ put the gguf files here (create it yourself)
+│   ├── Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf     main model
+│   └── mmproj-Qwen3.8-27B-Q8_0.gguf                vision projector, only for images
+├── maps\               draft shortlist (included, do not delete)
+├── llmchat\            command-line client (optional)
+├── features.ini        every switch this fork adds lives here
+└── llmserver.bat       double-click to start
 ```
 
+The `weights\` directory name is fixed — the launcher looks for `%~dp0weights\`.
+The model filename must match `MODEL=` in `llmserver.bat`.
+
 ---
 
-## Documentation
+## 3. Run it
 
-| File | Content |
+**No compiler needed.** Double-click `llmserver.bat`. You are up when you see:
+
+```
+load_model: loaded multimodal model, '...\weights\mmproj-...gguf'
+llama_server: listening on http://127.0.0.1:18080
+```
+
+Then hit the API:
+
+```bash
+curl http://127.0.0.1:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"hello"}]}'
+```
+
+Or use the bundled client, `llmchat\llmchat.bat`.
+
+**Requirements:** an NVIDIA driver. **8 GB VRAM** or more; on 6 GB drop `CTX` in
+`llmserver.bat` from `65536` to `32768` (and keep `kv-vram-cells` in `features.ini` at or below it).
+
+---
+
+## 4. Build it yourself
+
+For a different environment, or to modify the engine:
+
+```bat
+git clone https://github.com/professorpalmer/llama.cpp-ada-ternary.git
+cd llama.cpp-ada-ternary
+copy build.local.example.bat build.local.bat
+notepad build.local.bat        :: fill in six values
+_build_q8.bat
+```
+
+You need **VS2022 (MSVC) + CUDA Toolkit + CMake + Ninja**.
+
+The six values in `build.local.bat` are documented in the template itself:
+
+| Variable | What to put | Note |
+|---|---|---|
+| `VCVARS` | VS2022's `vcvars64.bat` | required — without it nvcc cannot find `cl.exe` |
+| `CMAKE` / `NINJA` | paths to the two tools | |
+| `NVCC` | `nvcc.exe` from your CUDA Toolkit | |
+| `CUDA_ARCH` | **your GPU's compute capability** | ⚠️ the one value that can build fine and still not run: 4060/4070 = `89`, 3060 = `86`, 4090 = `89` |
+| `JOBS` | parallelism, `4` on a laptop | nvcc will exhaust memory if set too high |
+
+Output lands in `..\build\src\bin\`; copy it over `build\bin\` when done.
+The log is `..\build\logs\_build_q8.log` — the last line reads `DONE` on success.
+
+> Forgetting `build.local.bat` **does not fail silently** — the script writes
+> `MISSING build.local.bat` and exits with code 9 instead of building somewhere unexpected.
+
+---
+
+## 5. Where the configuration lives
+
+Two files, no overlap:
+
+| File | Holds |
 |---|---|
-| `docs\BENCH.md` | **in-package measurement log**: what worked, what was rejected, measurement rules, silent-failure criteria, mistakes made |
-| `docs\VOCABMAP.md` | mechanism and payoff of the 24k draft shortlist |
-| `docs\design-vocab-shortlist.md` | full derivation of the shortlist design (payoff recomputed from actual code use) |
-| `docs\SPEEDUP-BUDGET.md` / `TERNARY-SPEEDUP-SURVEY.md` | speedup budget and survey |
-| `docs\ported-from-adaq8\PORTED.md` | sync record with adaq8 and **how to roll back** |
-| `docs\ported-from-adaq8\VOCAB-CJK.md` | shortlist and adaptive depth measured on Chinese / English / code |
-| `docs\JEV.md` | JEV apps (vision / graphics) |
+| `llmserver.bat` | parameters upstream understands: model, port, `-c` context, `-b` batch, `-ngl`, `-fa`, speculative type |
+| `features.ini` | **switches that only exist in this fork**; the engine reads it via `--features-file` |
+
+Two entries in `features.ini` worth knowing:
+
+- `kv-vram-cells` — how many KV cells stay in VRAM (the rest reads pinned RAM).
+  **Must be ≤ `CTX`.** Default `32768`.
+- `GGML_CUDA_FA_SHORTQ_MMA = 0` — disables the upstream "quantised V with a short query goes to f16"
+  detour. **Leave it off**: with it on, output degrades into repeated garbage in our measurements.
+
+Explicit command-line arguments **take priority over** `features.ini`.
 
 ---
 
-## Maintenance notes
+## 6. Traps
 
-1. **Comments in `llmserver.bat` and `features.ini` must be pure ASCII.** A UTF-8 Chinese
-   comment is decoded as GBK by cmd (codepage 936) and desynchronises: when a line's Chinese
-   byte count is odd it pairs with the first byte of the next line, swallowing that line's
-   `rem`, and the rest is executed as commands, producing a pile of
-   `'xxx' is not recognized`. **We hit this for real.**
-   ⇒ After editing any bat, run `python tools\bat_audit.py`, then
-   `--diff llmserver.bat <edited>` to confirm what actually changed.
-2. **This package ships only the CUDA runtime, no build toolchain.** To rebuild the engine,
-   go to `code\` (the full CUDA Toolkit is at `F:\super\tools\cuda`, including nvcc).
-3. **If a new binary needs a dll that was trimmed from `cuda\bin`, startup fails immediately.**
-   Re-test after swapping binaries.
-4. **When changing the base model**: check `llmserver.bat`'s `MODEL` together with every
-   model-bound item in `features.ini` (the shortlist path, for instance); the `VISION=1`
-   mmproj must match the new base.
-5. **Swapping the draft head needs no re-grafting**: same trunk, so just replace the gguf in
-   `weights\`.
-6. **Do not delete `F:\super\llm\_backup\bin-1012-prepartial\`** — it is currently the only
-   engine rollback point (the in-package `bin.bak-*` were cleared in the 2026-10-13 split).
+1. **Speed drops by an order of magnitude** → the KV cache spilled out of VRAM. `CTK/CTV=q4_0`
+   with `CTX=65536` is one matched pair; going to `q8_0` doubles bytes per cell and requires
+   halving `CTX`.
+2. **Repeated garbage output** → check that `GGML_CUDA_FA_SHORTQ_MMA` is not enabled (0 is correct).
+3. **A `.bat` you edited throws `'xxx' is not recognized`** → it was saved with **LF** line endings.
+   cmd needs **CRLF**, and comments inside the batch files **must be pure ASCII** (non-ASCII bytes
+   shift decoding under cmd's code page 936 and swallow the following line).
+4. **Port already in use** → the launcher runs `taskkill` on any existing `llama-server.exe` first
+   (deliberate; otherwise VRAM is not released). To run two instances, comment those lines out.
+5. **Image requests rejected** → you need `weights\mmproj-*.gguf`. When the file is absent the
+   launcher disables vision automatically and prints a warning.
 
 ---
 
-## Performance
+## 7. Provenance and licence
 
-**Scope warning:** the last **formal A/B** for this package was 2026-09-22, against the old
-base model (`Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf` + shortlist + fixed depth). No formal A/B
-has been run since the base change, so **do not compare the table below across base models**.
+**To be completed — required before upload.**
 
-Measured 2026-09-22, **same session**, median of 5 runs each (full evidence in `docs\BENCH.md`):
+This is a **derivative work**: the trunk comes from `Swift-Bonsai-2` 27B (architecture `qwen35`).
+What we produced is the **ternary quantisation and the MTP head conversion — no retraining**.
+The licence follows the base model; we add no further restrictions.
 
-| Config | Code | Prose | Peak VRAM |
-|---|---|---|---|
-| fixed depth 3 (baseline of that day) | 33.28 t/s | 30.28 t/s | 7523 MiB |
-| ✅ `adaptive [1..3]` | **34.93 (+5.0%)** | **33.47 (+10.5%)** | 7557 MiB |
-| `DRAFT=1` (different scope) | tie | **37.7 (+20%)** | — |
-
-- **The adaptive win is real, not noise**: the prose arm was 5 vs 5 with **zero overlap**,
-  and it ran second (heavier thermal throttling) yet still won by 10.5%.
-- **Do not raise `--spec-draft-n-max`**: the controller climbs past the setpoint, per-round
-  verify cost is roughly **linear in depth** while output is sub-linear, so deeper always loses.
-- Swapping the draft head (Q5_0+Q8_0 → Q6_K/Q4_K) is worth only **+1~3%**, inside the noise.
-- ⚠️ **Measurement noise is large**: the same config can spread **±12%** over 9 runs, and
-  cross-session differences reach 7%. Any A/B must be **same-session**, ≥3 prompts × ≥3 runs,
-  median.
-
-Smoke measurements 2026-10-11 (new base + adaptive + `features.ini`, **probe scope, not A/B**):
-
-| Scenario | Result |
-|---|---|
-| Prefill (short prompt) | 155 t/s |
-| Prefill (long prompt, 4096 chunking) | 500 → 391 t/s (29.6k tokens) |
-| Token generation (thinking off) | 20 ~ 41 t/s (strongly content-dependent) |
-| Multi-turn incremental reuse | turn 2: `prompt_n = 22 / cache_n = 1124` (**proper increment**) |
-
----
-
-## Provenance
-
-| In package | Origin |
-|---|---|
-| `build\bin\` | `F:\super\qwen27b\code\..\build\src\bin` (rebuilt 2026-10-13 after merging 14 upstream commits) |
-| `build\cuda\bin\` | `F:\super\tools\cuda\bin` (runtime dlls only; **no** nvcc / ptxas / nvdisasm) |
-| `weights\` | 6 gguf files incl. the production base `Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf` (renamed from `models\` on 2026-10-13) |
-| `engine\` | former `src\`: PTQ1 build scripts, `_dflash_bonsai.patch`, Ampere / SM86 handover docs (archive only) |
-
----
-
-## Related
-
-- `code\` — **engine source repo** (fork of `PrismML-Eng/llama.cpp`). `build\bin\` comes from
-  it; rebuild the engine there (CUDA Toolkit at `F:\super\tools\cuda`).
-- `..\llm\_backup\bin-1012-prepartial\` — **engine rollback point** (currently the only full
-  binary backup).
-- `..\adaq8\` — old copy plus ARC evaluation workspace, being merged into this package.
-- `docs\ported-from-adaq8\PORTED.md` — sync record and rollback steps.
+See the model card on the weights repository for details.
