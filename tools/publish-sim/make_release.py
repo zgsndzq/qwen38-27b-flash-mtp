@@ -36,7 +36,7 @@ def rmtree_hard(path):
 
 Q   = r"F:\super\qwen27b"
 OUT = r"F:\super\_release_out"
-HF  = os.path.join(OUT, "hf-model", "Ternary-Bonsai-2-27B-PTQ1_0-GGUF")
+HF  = os.path.join(OUT, "hf-model", "Swift-Bonsai-2-27B-GGUF")
 SRC = os.path.join(OUT, "github-src.git")
 REL = os.path.join(OUT, "releases")
 
@@ -94,7 +94,7 @@ for f in sorted(os.listdir(HF)):
             m.update(blk)
     sums.append("%s  %s" % (m.hexdigest(), f))
 open(os.path.join(HF, "SHA256SUMS"), "w", encoding="utf-8").write(
-    "# SHA256SUMS - Ternary-Bonsai-2-27B (PTQ1_0 + MTP)\n\n" + "\n".join(sums) + "\n")
+    "# SHA256SUMS - Swift-Bonsai-2 (PTQ1_0 + MTP)\n\n" + "\n".join(sums) + "\n")
 print("   SHA256SUMS -> %d line(s)" % len(sums))
 
 # ---------- 2. GitHub source repo ----------

@@ -10,12 +10,13 @@ license: apache-2.0
 tags: [ternary, PTQ1_0, quantization, GGUF, MTP, speculative-decoding, llama.cpp]
 ---
 
-# Ternary-Bonsai-2-27B (PTQ1_0 + MTP)
+# Swift-Bonsai-2 — 27B ternary (PTQ1_0) + MTP
 
-三值量化（1.58-bit class，GGUF `PTQ1_0`）的 Bonsai-2 27B，并自带 **MTP 自投机草稿头**，
-用在一块消费级 8 GB 显存卡上就能跑（RTX 4060 Laptop 实测 ~60-80 t/s）。
+**Swift Bonsai 2**（UkisAI 对 PrismML Ternary Bonsai 2 的 reasoning-efficiency 衍生版）
+嫁接 **MTP 自投机草稿头**之后的三值模型，按两种精度打包成 GGUF。
 
-权重体积从 27B 的 fp16（约 54 GB）压到 **5.8 GB**，是"能在本地跑"与"不能"的分界线。
+用在一块消费级 8 GB 显存卡上就能跑（RTX 4060 Laptop 实测 60–100 t/s）。
+权重 5.8 GB，是"能在本地跑"与"不能"的分界线。
 
 ---
 
@@ -119,7 +120,7 @@ q4_0 KV，64k 上下文）：
 
 ```bibtex
 @misc{ternary-bonsai-2-27b,
-  title  = {Ternary-Bonsai-2-27B (PTQ1\_0 + MTP)},
+  title  = {Swift-Bonsai-2 (PTQ1\_0 + MTP)},
   note   = {Ternary quantisation of Swift-Bonsai-2-27B with an integrated MTP draft head},
   year   = {2026}
 }
