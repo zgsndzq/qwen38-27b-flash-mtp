@@ -36,7 +36,7 @@ MODEL_MB = 5790.0
 PROMPT = ("Write a haiku about the sea, then explain in one sentence why the tide "
           "comes in twice a day.")
 
-# 这些子串是"参数真的进了内核"的证据，不是普通日志噪音
+# These substrings are evidence that a flag reached the kernel, not log noise.
 EVIDENCE_KEYS = (
     "n_ctx ",
     "n_batch ",
@@ -95,7 +95,7 @@ def main():
             print("REFUSING TO START: %s" % e)
             return 5
 
-        # --- 1) 等 health -------------------------------------------------
+        # --- 1) wait for health --------------------------------------------
         if not srv.wait_health(LOAD_TIMEOUT):
             print("NO HEALTH in %.0fs" % LOAD_TIMEOUT)
             print("--- server log tail ---")
@@ -111,8 +111,9 @@ def main():
         else:
             print("load disk IO     = <unavailable>")
 
-        # VRAM 是 KV 类型(q8_0 vs F16 差约 800 MB)唯一能从外部看到的证据：
-        # llama 层的 INFO 日志被服务端滤掉了，C/ubatch 看不到，只能看显存账。
+        # VRAM is the only externally visible evidence of the KV type (q8_0 vs F16
+        # differ by ~800 MB): the server filters llama-layer INFO logs, so C/ubatch
+        # are invisible and the memory ledger is all that is left.
         try:
             _v = os.popen('nvidia-smi --query-gpu=memory.used,memory.total '
                           '--format=csv,noheader,nounits').read().strip().splitlines()[0]
@@ -120,7 +121,7 @@ def main():
             _v = "<unavailable: %r>" % e
         print("vram used/total  = %s MiB   (q8_0 @ c131072/tier24000 measures ~7839)" % _v)
 
-        # --- 1b) 启动证据 --------------------------------------------------
+        # --- 1b) startup evidence ------------------------------------------
         if os.environ.get("SMOKE_FULLLOG") == "1":
             print("--- FULL in-RAM startup log (%d bytes) ---" % len(srv.tail_buf._buf))
             for ln in srv.tail_buf.text().splitlines():
@@ -134,7 +135,7 @@ def main():
             else:
                 print("  <none matched -- treat as 'flags NOT confirmed active'>")
 
-        # --- 2) 发一次请求，硬超时 ----------------------------------------
+        # --- 2) one request, hard timeout ----------------------------------
         url, payload_in = build_request()
         print("--- request: %s  mode=%s  n_predict=%d ---" % (url, MODE, NPREDICT))
         body = json.dumps(payload_in).encode("utf-8")
@@ -169,7 +170,8 @@ def main():
         print("decode  t/s     = %.2f   <== tg" % (tm.get("predicted_per_second") or 0))
         print("first token     = %.0f ms" % (tm.get("prompt_ms") or 0))
 
-        # 草稿接受率就是"思考段为什么慢"的唯一判据，之前的冒烟根本没打它。
+        # Draft acceptance is the only signal for why the thinking segment is slow,
+        # and the earlier smoke runs never printed it.
         dn, da = tm.get("draft_n"), tm.get("draft_n_accepted")
         if dn:
             print("draft accept    = %.4f (%s accepted / %s generated)"
@@ -182,7 +184,8 @@ def main():
         print("content chars   = %d" % len(txt))
         print("text head       = %s" % (txt[:110].replace("\n", " / ") or reason[:110].replace("\n", " / ")))
 
-        # 请求之后才出现的证据：draft 接受率、每轮 token 数、tg 曲线
+        # Evidence that only appears after the request: draft acceptance, tokens per
+        # round, the tg curve.
         print("--- server log tail (after the request) ---")
         tail = srv.tail_buf.text().splitlines()
         keep = [l.strip() for l in tail

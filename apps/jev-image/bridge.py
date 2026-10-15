@@ -47,21 +47,24 @@ SYS_DESC = (
     "If something is not visible, say so instead of guessing."
 )
 
-# 无图对照那一臂专用的 system：不能再说"你在看图"，否则模型只会回一句
-# "我无法查看图片"，对照就变成废话。没有图时让它照自己的先验直接答。
+# System prompt for the no-image control arm only. It must not claim to be looking
+# at a picture, or the model just answers "I cannot view images" and the control arm
+# says nothing. With no image, let it answer from its own priors.
 SYS_DESC_BLIND = (
     "Answer the question directly, from what you already know: "
     "short, concrete, no greetings, do not restate the question."
 )
 
 
-# ----------------------------------------------------------------- 中止通道
-# 点停止必须落成"把上游连接掐掉"，发取消请求没有用：
-#   非流式请求在服务端等的是 req.should_stop（tools/server/server-context.cpp:4558），
-#   它只认 TCP 连接断开；DELETE /v1/stream 那套只对带 X-Conversation-Id 的流式请求
-#   生效（server-stream.cpp:622-628）。所以桥上唯一能真停住 GPU 的动作，就是从
-#   另一个线程把这条上游连接关掉 —— 服务端立刻看到断开并取消这个 slot。
-# 前端给每次请求带一个 stop_key，连接就登记在这个 key 下。
+# ----------------------------------------------------------------- stop channel
+# Pressing stop must actually kill the upstream connection; a cancel request does
+# nothing. A non-streaming request on the server waits on req.should_stop
+# (tools/server/server-context.cpp:4558) and that only reacts to the TCP connection
+# dropping; the DELETE /v1/stream route applies only to streaming requests carrying
+# X-Conversation-Id (server-stream.cpp:622-628). So the only thing that really stops
+# the GPU from the bridge is closing this upstream connection from another thread -
+# the server sees the drop and cancels the slot immediately.
+# The page sends a stop_key with each request; the connection is registered under it.
 _LIVE = {}                       # stop_key -> _TrackedConn
 _LIVE_LOCK = threading.Lock()
 _PLAIN_OPENER = urllib.request.build_opener()
@@ -242,7 +245,8 @@ def ask(req):
 
     def once(with_image):
         if mode == "jev":
-            # 判据模式是 max_tokens=1 的"一次前向"，没有可中止的解码过程，不接 stop_key
+            # The probe mode is a single forward pass at max_tokens=1; there is no
+            # decode loop to abort, so it takes no stop_key.
             return ask_jev(q, opts, img if with_image else None,
                            timeout=timeout, usd=usd, cache=cache)
         return ask_desc(q, img if with_image else None,
@@ -305,7 +309,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send(200, {"up": False, "error": str(e)})
         if path.startswith("/api/demo"):
-            # 只给页面的 ?demo=1 用：把一张示例图交给浏览器自动跑一遍（截图/演示）。
+            # Used by ?demo=1 only: hands one sample image to the page so it can
+            # run itself once, for screenshots and demos.
             p = Path(os.environ.get("JEV_DEMO_IMAGE")
                      or r"F:\super\qwen27b\llmchat\mem\chess.png")
             if not p.exists():

@@ -58,7 +58,7 @@ def msgs(with_reasoning):
 show("A1 回传 reasoning_content   <- chat.py 现在这么做", msgs(True))
 show("A2 不回传                    <- 思考会整段变空", msgs(False))
 
-# ---------------- B: effort 注入 ----------------
+# ---------------- B: effort injection ----------------
 print("######## B. reasoning_effort 往 system 里塞什么 ########\n")
 
 user_only = [{"role": "user", "content": U1}]

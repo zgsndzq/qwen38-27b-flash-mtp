@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 复现 _build_q8.ps1 的 portable toolchain 环境，然后用 ninja 构建。
-# 用法: bash tools/_build_adaq8.sh [-n] [target...]
+# Reproduce the portable toolchain environment of _build_q8.bat, then build with ninja.
+# Usage: bash tools/_build_adaq8.sh [-n] [target...]
 set -u
 
 export TOOLS="F:/super/tools"

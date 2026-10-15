@@ -15,13 +15,13 @@
     cache_prompt 默认 False（每次都全量 prefill），测的是最坏情况。
 
 用法：
-    # 单题
+    # single question
     python image_jev.py --image mem/chess.png --question "..." --options "甲,乙,丙"
-    # 批量（每行 {"id","image","question","options","gold"}）
+    # batch (one JSON object per line: id, image, question, options, gold)
     python image_jev.py --batch items.jsonl --out preds.jsonl
-    # 打分（准确率 + 10-bin ECE + 延迟/成本）
+    # score: accuracy + 10-bin ECE + latency / cost
     python image_jev.py --score preds.jsonl --usd-per-gpu-hour 1.0
-    # 只看拼装不发请求
+    # assemble only, send no request
     python image_jev.py --batch items.jsonl --dry
 """
 
@@ -124,7 +124,7 @@ def decide(question, options, image=None, cache=False, timeout=300,
     sha, nbytes = None, 0
     if image:
         url, sha, nbytes = data_url(image)
-        # 顺序：文本（任务）在前，图在后 —— 与 llmchat 的注入顺序一致。
+        # Order: task text first, image after - same as llmchat's injection order.
         content = [{"type": "text", "text": text},
                    {"type": "image_url", "image_url": {"url": url}}]
     else:
@@ -170,7 +170,9 @@ def decide(question, options, image=None, cache=False, timeout=300,
     ws = [math.exp(v - m) for v in lps]
     s = sum(ws) or 1.0
     probs = {L: w / s for L, w in zip(labels, ws)}
-    # 有效概率覆盖：选项字母在完整词表分布里的总概率。低 = 模型本来想说别的（答案不可信）。
+    # Effective probability mass: total probability of the option letters in the
+    # full vocabulary distribution. Low = the model wanted to say something else,
+    # so the answer cannot be trusted.
     mass = min(sum(math.exp(v) for v in lps), 1.0)
     answer = max(labels, key=lambda L: probs[L]) if by else None
 
