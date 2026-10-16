@@ -4,7 +4,7 @@ Run make_release.py first. This then:
 
   0) makes an empty F:\\super\\duan
   1) unzips the release archive into it
-  2) copies the gguf from the HF directory into ada-ternary\\weights\\
+  2) copies the gguf from the HF directory into llama.cpp-qwen38-flash\\weights\\
   3) git clones the source (scenario B: build it yourself)
   4) scans the result for any reference back to the project directory
   5) prints the resulting tree
@@ -42,10 +42,10 @@ def rmtree_hard(path):
 
 OUT  = r"F:\super\_release_out"
 DUAN = r"F:\super\duan"
-HF   = os.path.join(OUT, "hf-model", "Ternary-Bonsai-2-27B-PTQ1_0-GGUF")
+HF   = os.path.join(OUT, "hf-model", "Qwen3.8-27B-Flash-MTP-PTQ1_0-GGUF")
 SRC  = os.path.join(OUT, "github-src.git")
 REL  = os.path.join(OUT, "releases")
-APP  = os.path.join(DUAN, "ada-ternary")
+APP  = os.path.join(DUAN, "llama.cpp-qwen38-flash")
 
 
 def hr(t):
@@ -61,7 +61,7 @@ print("   ready")
 # ---------- 1. download + unzip the release ----------
 hr("1) [user] download the release archive and unzip")
 zips = sorted(os.path.join(REL, f) for f in os.listdir(REL)
-              if f.startswith("ada-ternary-win64") and f.endswith(".zip"))
+              if f.startswith("llama.cpp-qwen38-flash-win64") and f.endswith(".zip"))
 if not zips:
     raise SystemExit("no release archive in %s - run make_release.py first" % REL)
 zp = zips[-1]

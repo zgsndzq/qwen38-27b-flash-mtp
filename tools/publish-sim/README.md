@@ -14,7 +14,7 @@ python tools/publish-sim/make_release.py     # 约 1 分钟 + 打包 50 秒
 python tools/publish-sim/simulate_user.py    # 约 1 分钟
 ```
 
-然后双击 `F:\super\duan\ada-ternary\llmserver.bat`（权重已就位）。
+然后双击 `F:\super\duan\llama.cpp-qwen38-flash\llmserver.bat`（权重已就位）。
 
 ## 两个脚本各自做什么
 
@@ -24,12 +24,12 @@ python tools/publish-sim/simulate_user.py    # 约 1 分钟
 |---|---|---|
 | `_release_out\hf-model\<repo>\` | Hugging Face model repo | gguf 用**硬链接**，不占 29 GB |
 | `_release_out\github-src.git\` | GitHub 源码仓 | 裸 clone，模拟用户 `git clone` 的目标 |
-| `_release_out\releases\ada-ternary-win64-*.zip` | GitHub Releases | `build\bin` + `build\cuda` + runtime 配置 |
+| `_release_out\releases\llama.cpp-qwen38-flash-win64-*.zip` | GitHub Releases | `build\bin` + `build\cuda` + runtime 配置 |
 
 **simulate_user.py** 模拟使用者：
 
-1. 解压 Release zip 到 `duan\ada-ternary\`
-2. 从 HF 目录取权重到 `ada-ternary\weights\`
+1. 解压 Release zip 到 `duan\llama.cpp-qwen38-flash\`
+2. 从 HF 目录取权重到 `llama.cpp-qwen38-flash\weights\`
 3. `git clone` 源码到 `duan\code\`（场景 B 用）
 4. **隔离性自检**：扫 `duan\` 里还有没有指向 `qwen27b` / `adaq8` 的引用
 
@@ -46,7 +46,7 @@ notepad build.local.bat          :: 填 6 个值，模板里有注释
 _build_q8.bat
 ```
 
-产物在 `duan\build\src\bin\`，覆盖到 `duan\ada-ternary\build\bin\` 就能用。
+产物在 `duan\build\src\bin\`，覆盖到 `duan\llama.cpp-qwen38-flash\build\bin\` 就能用。
 
 ## 注意
 

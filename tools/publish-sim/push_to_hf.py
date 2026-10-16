@@ -19,9 +19,9 @@ except ImportError:
              r"C:\Users\bestd\.workbuddy\binaries\python\envs\default")
 
 USER   = "SuperLogic"
-REPO   = "Swift-Bonsai-2-27B-GGUF"
+REPO   = "Qwen3.8-27B-Flash-MTP-GGUF"
 FULL   = "%s/%s" % (USER, REPO)
-SRC    = r"F:\super\_release_out\hf-model\Swift-Bonsai-2-27B-GGUF"
+SRC    = r"F:\super\_release_out\hf-model\Qwen3.8-27B-Flash-MTP-GGUF"
 
 api = HfApi()
 
