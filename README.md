@@ -1,5 +1,4 @@
-# ada-ternary-runtime — Swift-Bonsai-2-27B 运行包
-
+# qwen38-27b-flash-mtp — Qwen3.8-27B-Flash-MTP 运行包
 三值量化（`PTQ1_0`）的 Bonsai-2 27B，自带 **MTP 自投机草稿头**。
 权重 5.79 GB，**8 GB 显存的消费级卡就能跑**，实测 **70 t/s**（关思考）、
 **100–200 t/s**（编辑模式）。
@@ -18,9 +17,9 @@
 | 东西 | 从哪拿 | 多大 | 必须吗 |
 |---|---|---|---|
 | `llmserver.bat` / `llmserver.sh` / `features.ini` / `llmchat\` / `maps\` | **本仓**（`git clone`） | < 1 MB | **必须** |
-| 引擎二进制（`build\bin` + `build\cuda`） | [Releases](https://github.com/zgsndzq/ada-ternary/releases) | 566 MB | 不想自己编就要 |
-| 权重 `weights\*.gguf` | [Hugging Face](https://huggingface.co/SuperLogic/Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km) | 5.79 GB + 0.59 GB | **必须** |
-| 引擎源码（`code\`） | [zgsndzq/ada-ternary](https://github.com/zgsndzq/ada-ternary) | 350 MB | 想自己编才要 |
+| 引擎二进制（`build\bin` + `build\cuda`） | [Releases](https://github.com/zgsndzq/llama.cpp-qwen38-flash/releases) | 566 MB | 不想自己编就要 |
+| 权重 `weights\*.gguf` | [Hugging Face](https://huggingface.co/SuperLogic/Qwen3.8-27B-Flash-MTP-GGUF) | 5.79 GB + 0.59 GB | **必须** |
+| 引擎源码（`code\`） | [zgsndzq/llama.cpp-qwen38-flash](https://github.com/zgsndzq/llama.cpp-qwen38-flash) | 350 MB | 想自己编才要 |
 
 这样分的原因：**脚本要能提 PR、能看 diff**。以前它们只活在一个 566 MB 的 zip 里，
 没人能改、没人能审。
@@ -30,8 +29,8 @@
 ## 二、三步跑起来
 
 ```bat
-git clone https://github.com/zgsndzq/ada-ternary-runtime
-cd ada-ternary-runtime
+git clone https://github.com/zgsndzq/qwen38-27b-flash-mtp
+cd qwen38-27b-flash-mtp
 ```
 
 1. 把 Release 的二进制 zip 解压到**当前目录** → 得到 `build\bin\` 和 `build\cuda\bin\`
@@ -63,7 +62,7 @@ curl http://127.0.0.1:18080/v1/chat/completions \
 ## 三、目录长什么样
 
 ```
-ada-ternary-runtime\
+qwen38-27b-flash-mtp\
 ├── llmserver.bat        ← 双击启动（Windows）
 ├── llmserver.sh         ← ./llmserver.sh（Linux，参数逐个对齐）
 ├── features.ini         ← ★ 我们的配置全在这里
@@ -151,7 +150,7 @@ features.ini          ──►  --features-file  ──►  llama-server
 ## 五、想自己编
 
 改了引擎、或者显卡算力不是 89 的时候：见 `build\README.md`。
-一句话是 `git clone .../ada-ternary code` → 填 `code\build.local.bat` → `code\_build_q8.bat`。
+一句话是 `git clone .../llama.cpp-qwen38-flash code` → 填 `code\build.local.bat` → `code\_build_q8.bat`。
 
 编出来的东西在 `build\src\bin\`，`llmserver.bat` **两个位置都认，优先用你自己编的**，
 不需要手工拷贝。
@@ -164,11 +163,11 @@ features.ini          ──►  --features-file  ──►  llama-server
 加一串参数。Linux 上对应的是同目录的 **`llmserver.sh`**，参数与 `llmserver.bat` **逐个对齐**：
 
 ```bash
-git clone https://github.com/zgsndzq/ada-ternary-runtime
-cd ada-ternary-runtime
+git clone https://github.com/zgsndzq/qwen38-27b-flash-mtp
+cd qwen38-27b-flash-mtp
 
 # 没有预编译的 Linux 二进制，必须自己编
-git clone https://github.com/zgsndzq/ada-ternary code
+git clone https://github.com/zgsndzq/llama.cpp-qwen38-flash code
 cmake -B build/src -S code -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CUDA_ARCHITECTURES=89 \

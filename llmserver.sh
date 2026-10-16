@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ===========================================================================
-#  ada-ternary runtime launcher (Linux)
+#  llama.cpp-qwen38-flash runtime launcher (Linux)
 #  The Windows equivalent is llmserver.bat -- same parameters, same order.
 #
 #  Engine binary: build/src/bin (your own build) is preferred, build/bin is the
@@ -24,7 +24,7 @@ else
   cat >&2 <<'EOF'
 [error] llama-server not found. There is no prebuilt Linux binary -- build it:
 
-  git clone https://github.com/zgsndzq/ada-ternary code
+  git clone https://github.com/zgsndzq/llama.cpp-qwen38-flash code
   cmake -B build/src -S code -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CUDA_ARCHITECTURES=89 \
@@ -44,7 +44,7 @@ fi
 # shared libraries: the built tree keeps them next to the binary
 export LD_LIBRARY_PATH="$PWD/$SERVER:$PWD/build/bin:${LD_LIBRARY_PATH:-}"
 
-MODEL="Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf"
+MODEL="Qwen3.8-27B-Flash-MTP.gguf"
 # context size; drop to 32768 on a 6 GB card (and kv-vram-cells in features.ini too)
 CTX=65536
 # KV precision. cells kept in VRAM = features.ini kv-vram-cells (must be <= CTX).
@@ -74,7 +74,7 @@ args=(
   --spec-ngram-mod-n-max "$NGMAX"
   --spec-ngram-mod-n-match "$NMATCH"
   --features-file features.ini
-  --alias "Ternary-Bonsai-2-27B"
+  --alias "Qwen3.8-27B-Flash-MTP"
 )
 
 # vision projector. VISION=1 mounts it, but only when the file is actually there.

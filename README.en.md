@@ -1,5 +1,4 @@
-# ada-ternary-runtime — Swift-Bonsai-2-27B runtime
-
+# qwen38-27b-flash-mtp — Qwen3.8-27B-Flash-MTP runtime
 A ternary-quantised (`PTQ1_0`) Bonsai-2 27B with a **built-in MTP self-speculative draft head**.
 5.79 GB of weights, runs on **an 8 GB consumer card**. Measured **70 t/s** with thinking off,
 **100–200 t/s** in editing mode.
@@ -19,9 +18,9 @@ own distribution channel:
 | What | Where | Size | Required |
 |---|---|---|---|
 | `llmserver.bat` / `llmserver.sh` / `features.ini` / `llmchat\` / `maps\` | **this repo** (`git clone`) | < 1 MB | yes |
-| engine binaries (`build\bin` + `build\cuda`) | [Releases](https://github.com/zgsndzq/ada-ternary/releases) | 566 MB | unless you build |
-| weights `weights\*.gguf` | [Hugging Face](https://huggingface.co/SuperLogic/Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km) | 5.79 GB + 0.59 GB | yes |
-| engine source (`code\`) | [zgsndzq/ada-ternary](https://github.com/zgsndzq/ada-ternary) | 350 MB | only to build |
+| engine binaries (`build\bin` + `build\cuda`) | [Releases](https://github.com/zgsndzq/llama.cpp-qwen38-flash/releases) | 566 MB | unless you build |
+| weights `weights\*.gguf` | [Hugging Face](https://huggingface.co/SuperLogic/Qwen3.8-27B-Flash-MTP-GGUF) | 5.79 GB + 0.59 GB | yes |
+| engine source (`code\`) | [zgsndzq/llama.cpp-qwen38-flash](https://github.com/zgsndzq/llama.cpp-qwen38-flash) | 350 MB | only to build |
 
 Why the split: **the scripts have to be reviewable.** They used to exist only inside a 566 MB
 zip, where nobody could diff them or send a pull request.
@@ -31,8 +30,8 @@ zip, where nobody could diff them or send a pull request.
 ## 2. Running it in three steps
 
 ```bat
-git clone https://github.com/zgsndzq/ada-ternary-runtime
-cd ada-ternary-runtime
+git clone https://github.com/zgsndzq/qwen38-27b-flash-mtp
+cd qwen38-27b-flash-mtp
 ```
 
 1. Extract the release binary zip **into this folder** → you get `build\bin\` and `build\cuda\bin\`
@@ -64,7 +63,7 @@ from `65536` to `32768`, and `kv-vram-cells` in `features.ini` must be `<=` that
 ## 3. Layout
 
 ```
-ada-ternary-runtime\
+qwen38-27b-flash-mtp\
 ├── llmserver.bat        <- double-click to start (Windows)
 ├── llmserver.sh         <- ./llmserver.sh (Linux, parameters aligned)
 ├── features.ini         <- ALL of our switches live here
@@ -153,7 +152,7 @@ Explicit command-line arguments **win over** `features.ini`.
 ## 5. Building it yourself
 
 When you changed the engine, or your GPU is not compute capability 89: see `build\README.md`.
-In one line: `git clone .../ada-ternary code` → edit `code\build.local.bat` → run `code\_build_q8.bat`.
+In one line: `git clone .../llama.cpp-qwen38-flash code` → edit `code\build.local.bat` → run `code\_build_q8.bat`.
 
 The result lands in `build\src\bin\`. `llmserver.bat` **accepts both locations and prefers your own
 build** — no manual copying.
@@ -167,11 +166,11 @@ The `.bat` is Windows-only, but **the stack itself is cross-platform** — the r
 with parameters **aligned one-to-one** with `llmserver.bat`:
 
 ```bash
-git clone https://github.com/zgsndzq/ada-ternary-runtime
-cd ada-ternary-runtime
+git clone https://github.com/zgsndzq/qwen38-27b-flash-mtp
+cd qwen38-27b-flash-mtp
 
 # there is no prebuilt Linux binary, so you build it
-git clone https://github.com/zgsndzq/ada-ternary code
+git clone https://github.com/zgsndzq/llama.cpp-qwen38-flash code
 cmake -B build/src -S code -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CUDA_ARCHITECTURES=89 \

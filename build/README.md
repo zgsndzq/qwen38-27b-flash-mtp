@@ -4,8 +4,8 @@
 
 ## 路线 A：用预编译的（推荐，不用装编译环境）
 
-去 [Releases](https://github.com/zgsndzq/ada-ternary/releases) 下
-`ada-ternary-win64-sm89-*.zip`，解压出来的内容放到这里：
+去 [Releases](https://github.com/zgsndzq/llama.cpp-qwen38-flash/releases) 下
+`qwen38-27b-flash-win64-sm89-*.zip`，解压出来的内容放到这里：
 
 ```
 build\
@@ -18,7 +18,7 @@ build\
 ## 路线 B：自己编（改了引擎、或者显卡不是 sm_89）
 
 ```bat
-git clone https://github.com/zgsndzq/ada-ternary code
+git clone https://github.com/zgsndzq/llama.cpp-qwen38-flash code
 copy code\build.local.example.bat code\build.local.bat
 notepad code\build.local.bat        :: 填 6 个值，文件里有注释
 code\_build_q8.bat

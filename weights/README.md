@@ -2,20 +2,20 @@
 
 **权重不在 git 里**，在 Hugging Face：
 
-### 👉 https://huggingface.co/SuperLogic/Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km
+### 👉 https://huggingface.co/SuperLogic/Qwen3.8-27B-Flash-MTP-GGUF
 
 下载后放到这个目录，文件名**不要改**（`llmserver.bat` 按名字找）：
 
 | 文件 | 大小 | 必须吗 |
 |---|---|---|
-| `Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf` | 5.79 GB | **必须**，主模型 |
+| `Qwen3.8-27B-Flash-MTP.gguf` | 5.79 GB | **必须**，主模型 |
 | `mmproj-Qwen3.8-27B-Q8_0.gguf` | 0.59 GB | 要读图片才需要 |
 
 放好之后目录长这样：
 
 ```
 weights\
-├── Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf
+├── Qwen3.8-27B-Flash-MTP.gguf
 └── mmproj-Qwen3.8-27B-Q8_0.gguf
 ```
 

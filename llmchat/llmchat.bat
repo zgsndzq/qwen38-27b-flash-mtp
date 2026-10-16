@@ -26,6 +26,6 @@ set "SYSARG="
 if "%SYS%"=="0" set "SYSARG=--no-sys"
 if "%SYS%"=="1" if exist "%~dp0%SYS_FILE%" set "SYSARG=--sys-file "%~dp0%SYS_FILE%""
 
-title llmchat [Ternary-Bonsai-2-27B-SelfMTP-Q6K] :18080
+title llmchat [Qwen3.8-27B-Flash-MTP-Qwen3.8-27B-Flash-MTP] :18080
 "%PY%" "%~dp0chat.py" --base-url http://127.0.0.1:18080 --temp 0.6 --think %THINK% %EFFARG% %SYSARG% %*
 pause

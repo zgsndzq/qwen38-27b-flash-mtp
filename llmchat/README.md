@@ -76,7 +76,7 @@ python chat.py --temp 0.6 --think on --effort medium
 client argv = chat.py --base-url http://127.0.0.1:18080 --temp 0.6 --think on --effort medium --max-tokens 400
 rc = 0   elapsed = 4.8s   stderr 空
 底座: http://127.0.0.1:18080  temp=0.6  思考=开(medium)
-服务端模型: Ternary-Bonsai-2-27B
+服务端模型: Qwen3.8-27B-Flash-MTP
 [思考] ...（思考块正常输出）
 [回答] 快速排序是一种通过选取基准元素…的分治算法。
 你> 上下文已清空（保留 system prompt，历史 0 条）      <- clear 生效

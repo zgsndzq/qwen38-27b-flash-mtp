@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 
 rem ===========================================================================
-rem  ada-ternary runtime launcher
+rem  llama.cpp-qwen38-flash runtime launcher
 rem
 rem  Where the engine binary comes from -- this script accepts both layouts:
 rem    1. prebuilt release  : extract the release zip here  -> build\bin
@@ -34,7 +34,7 @@ if exist "%~dp0build\cuda\bin" (
 )
 set "PATH=%SERVER%;%~dp0build\bin;%PATH%"
 
-set "MODEL=Swift-Bonsai-2-PTQ1_0-mtp-pro-q4km.gguf"
+set "MODEL=Qwen3.8-27B-Flash-MTP.gguf"
 set "CTX=65536"
 rem KV precision. cells kept in VRAM = features.ini kv-vram-cells (must be <= CTX).
 set "CTK=q4_0"
@@ -50,7 +50,7 @@ set "NGMIN=24"
 set "NGMAX=64"
 set "LOOKUP_N=%NGMAX%"
 
-title Ternary-Bonsai-2-27B-ada-ternary :18080
+title Qwen3.8-27B-Flash-MTP :18080
 
 rem a stale instance keeps :18080 and its VRAM, so kill it before binding again.
 taskkill /F /IM llama-server.exe >nul 2>nul
@@ -76,5 +76,5 @@ if "%VISION%"=="1" if exist "%MMPROJ%" (
   --spec-ngram-mod-n-max %NGMAX% ^
   --spec-ngram-mod-n-match %NMATCH% ^
   --features-file features.ini ^
-  --alias "Ternary-Bonsai-2-27B" ^
+  --alias "Qwen3.8-27B-Flash-MTP" ^
   %VISARG%
