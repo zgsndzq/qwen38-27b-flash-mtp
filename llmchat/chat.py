@@ -65,7 +65,30 @@ def _seed_messages(sys_prompt):
 
 
 DEFAULT_TIMEOUT = float(os.environ.get("LLAMA_CHAT_TIMEOUT", "600"))
-CTX_LIMIT = int(os.environ.get("LLAMA_CHAT_CTX", "32768"))   # 仅用于水位提示
+# 水位提示的分母。以前写死 32768，服务端改成 65536 / 131072 之后它还在报 28% 那种
+# 假水位。现在优先问服务端 /props 的 n_ctx，拿不到才退回环境变量。
+CTX_LIMIT = int(os.environ.get("LLAMA_CHAT_CTX", "131072"))
+
+
+def ctx_limit(base_url):
+    """服务端真实 n_ctx；查不到就返回 CTX_LIMIT。只在第一次用到时问一次。"""
+    global _CTX_PROBED
+    if _CTX_PROBED is None:
+        _CTX_PROBED = 0
+        try:
+            with urllib.request.urlopen(base_url + "/props", timeout=3) as resp:
+                d = json.loads(resp.read().decode("utf-8"))
+            n = (d.get("default_generation_settings") or {}).get("n_ctx") or d.get("n_ctx")
+            if n:
+                _CTX_PROBED = int(n)
+        except Exception:
+            pass
+        if not _CTX_PROBED:
+            _CTX_PROBED = CTX_LIMIT
+    return _CTX_PROBED
+
+
+_CTX_PROBED = None
 
 EXIT_CMDS = ("quit", "exit", "q", "/quit", "/exit", "退出")
 CLEAR_CMDS = ("clear", "/clear", "cls", "/cls", "清空", "清除上下文")
@@ -617,7 +640,8 @@ def main(argv=None):
 
         ctx = (timings.get("prompt_n") or 0) + (timings.get("cache_n") or 0)
         if ctx:
-            print(f"  [ctx {ctx} tok · 水位 {100.0 * ctx / CTX_LIMIT:.0f}%]")
+            limit = ctx_limit(base_url)
+            print(f"  [ctx {ctx} tok · 水位 {100.0 * ctx / limit:.0f}% / {limit}]")
         # Speed: the server already reports it in timings, but the launcher only
         # prints it in its own window. pp = prefill (new prompt this turn),
         # tg = token generation, which is the speed you actually feel.
