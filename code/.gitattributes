@@ -1,0 +1,4 @@
+# ada fork: cmd mis-parses LF line endings (a rem line swallows the next command),
+# so pin the batch files to CRLF. core.autocrlf would otherwise normalise them to LF.
+*.bat text eol=crlf
+*.cmd text eol=crlf

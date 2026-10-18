@@ -1,44 +1,19 @@
-# 大件不进 Git —— 各有分发渠道：
-#   /weights/  *.gguf        -> Hugging Face Hub
-#   /build/    二进制+CUDA   -> GitHub Releases
-#   /data/     数据工程产物   -> HF dataset repo
-/weights/
+# 本仓 = 整个推理环境：源码 code/、启动脚本、features.ini、maps/、客户端 llmchat/、
+# 发布工具 tools/gguf_*。下面这些不进 Git，各有去向。
+
+# 权重：Hugging Face Hub（在上一级 weights/，不在本仓）
+*.gguf
+*.gguf.json
+
+# 编译产物：build/bin + build/cuda 走 GitHub Releases，build/src 是 CMake 树
 /build/
-/data/
 
-# 语料与生成物：代码在，语料不在
-/train/vocab/corpus/
-/train/vocab/out/
-/train/vocab/_tools/
-/train/trainlib/*/
-/train/ternary/out/
-
-# 训练产物
-/train/**/*.pt
-/train/**/*.bin
-/train/**/*.idx
+# 运行时产物
+/logs/
+*.log
 
 # 生成物与临时文件
 /tmp/
 __pycache__/
 *.pyc
-*.log
-
-# 应用输出
-/apps/jev-image/out/
-/apps/jev-tetris/shots/
-
-# 第三方克隆 / 独立子项目：各自是仓，父仓不引用
-/train/cute-triadic-gdn/
-/train/ternary/
-
-# 应用截图
-/apps/jev-image/shots/
-/apps/jev-tetris/shots/
-# 引擎源码：独立的 git 仓，父仓不引用
-/code/
-/forks/
-
-# 发布与推广材料：模型卡、推广话术、上传脚本。
-# 这些是运营材料，不是产品代码，明确不进任何 git 仓 —— 免得顺手 push 到引擎仓去。
-/public/
+/.workbuddy/

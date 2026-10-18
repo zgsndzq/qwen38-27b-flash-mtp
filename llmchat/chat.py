@@ -34,6 +34,7 @@ import json
 import os
 import socket
 import sys
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -355,6 +356,74 @@ def _build_parser():
 # --------------------------------------------------------------------------
 MEM_DIR = Path(__file__).resolve().with_name("mem")
 
+# --------------------------------------------------------------------------
+# 会话落盘 + KV 槽位缓存（重启后秒恢复）
+#
+# 服务端用 --slot-save-path <dir> 启动时，/slots/0?action=save|restore|erase 能把
+# 整段 KV（含 48 层 GDN 的递推状态和 MTP 草稿上下文）存成文件再读回来。重启后
+# 继续同一段对话只读回槽位、不重算整段 prompt：16k 前缀约从 50 s 变成 1 s 级。
+# 前提是**新请求必须是已存 token 的延长**；中间改过历史就退化成全量重读，不会出错。
+# --------------------------------------------------------------------------
+SESSION_FILE = Path(__file__).resolve().parent.parent / "logs" / "llmchat_session.json"
+SLOT_NAME = "llmchat.slot"
+SLOT_FILE = Path(__file__).resolve().parent.parent / "logs" / "slots" / SLOT_NAME
+SLOT_MIN = int(os.environ.get("LLAMA_SLOT_MIN", "8192"))   # 短于这个长度不值得来回存盘
+SLOT_GROW = int(os.environ.get("LLAMA_SLOT_GROW", "2048"))  # 上下文长这么多才重存一次（439MB 不便宜）
+_slot_off = False                                          # 服务端没配 --slot-save-path 时置位
+
+
+def slot_action(base_url, action, filename=None, timeout=180):
+    """POST /slots/0?action=...；文件名走 JSON body（这个构建的路由是 POST，GET 会 404）。"""
+    global _slot_off
+    if _slot_off and action != "erase":
+        return None
+    url = f"{base_url}/slots/0?action={action}"
+    body = json.dumps({"filename": filename} if filename else {}).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8") or "{}")
+    except Exception as e:
+        # restore 失败很常见（第一次跑、文件被删），不能因此把 save 也关掉
+        if action == "save" and not _slot_off:
+            _slot_off = True
+            print(f"  [槽位] 保存失败：{e}")
+        elif action == "restore":
+            print(f"  [槽位] 读回未生效：{e}")
+        return None
+
+
+def session_save(messages, tokens, slot_tokens=None):
+    """会话落盘。slot_tokens = 上次成功存槽位时的 token 数，用来决定下次要不要重存。"""
+    try:
+        SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+        data = {"messages": messages, "tokens": int(tokens), "slot": SLOT_NAME}
+        if slot_tokens is not None:
+            data["slot_tokens"] = int(slot_tokens)
+        else:
+            old = session_load() or {}
+            if old.get("slot_tokens"):
+                data["slot_tokens"] = int(old["slot_tokens"])
+        SESSION_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def session_load():
+    try:
+        return json.loads(SESSION_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def session_clear(base_url):
+    try:
+        SESSION_FILE.unlink()
+    except OSError:
+        pass
+    slot_action(base_url, "erase")
+
 # Text memory = every text file under mem\, recursively.
 TEXT_SUFFIX = (".md", ".markdown", ".txt", ".quads")
 
@@ -514,6 +583,16 @@ def main(argv=None):
     messages = _seed_messages(sys_prompt)
     mem_done = False        # 记忆只注入首轮（clear 后重置）
 
+    # 上次的会话：消息 + 槽位。恢复后 mem_done=True，避免把记忆再注入一遍。
+    saved = session_load()
+    need_restore = False
+    if saved and saved.get("messages"):
+        messages = saved["messages"]
+        mem_done = True
+        need_restore = True
+        print(f"已恢复上次会话：{len(messages)} 条消息、约 {saved.get('tokens') or 0} tok"
+              f"（输入 clear 重新开始）\n")
+
     # MEM_MODE picks the kind; text memory is additionally gated by --mem.
     use_text = MEM_MODE in (1, 3)
     use_vision = MEM_MODE in (2, 3)
@@ -555,6 +634,7 @@ def main(argv=None):
         if meta == "clear":
             messages = _seed_messages(sys_prompt)
             mem_done = False                # 清空上下文 ⇒ 允许下一轮重新做首轮注入
+            session_clear(base_url)         # 落盘的会话和槽位一起清掉
             _n_sys = 0 if sys_prompt is None else 1
             _tail = "，无 system" if sys_prompt is None else ""
             print(f"上下文已清空（历史 {len(messages) - _n_sys} 条{_tail}；"
@@ -595,6 +675,17 @@ def main(argv=None):
         # History keeps exactly what was sent: memory + image on turn 1, plain
         # user text afterwards.
         sent_msgs = messages + [{"role": "user", "content": sent}]
+
+        # 上次的槽位只在恢复后的第一轮读一次；服务端会取最长公共前缀，改过历史
+        # 就自动退化成重算，不会读进错误的 KV。
+        if need_restore:
+            need_restore = False
+            # 文件不在就别发请求了：服务端会回 400「No available space in KV cache」，
+            # 那条日志很容易被误读成 KV 满了。
+            if (saved.get("tokens") or 0) >= SLOT_MIN and SLOT_FILE.exists():
+                r = slot_action(base_url, "restore", SLOT_NAME)
+                if r and r.get("n_restored"):
+                    print(f"  [槽位] 读回 {r['n_restored']} tok，本轮只算新增部分")
         try:
             printer = stream_printer(hide_thinking=a.hide_thinking)
             reasoning, content, timings = chat_sse(
@@ -642,6 +733,21 @@ def main(argv=None):
         if ctx:
             limit = ctx_limit(base_url)
             print(f"  [ctx {ctx} tok · 水位 {100.0 * ctx / limit:.0f}% / {limit}]")
+            # 会话落盘 + 长前缀存槽位：下次启动（或换个会话再回来）直接读回，
+            # 不用重算整段 prompt。短于 SLOT_MIN 的不存；上下文没长出 SLOT_GROW
+            # 也不重存——一个槽位文件 28 KB/token，16k 就 440 MB。
+            session_save(messages, ctx)
+            prev = int(saved.get("slot_tokens") or 0) if isinstance(saved, dict) else 0
+            if ctx >= SLOT_MIN and (not SLOT_FILE.exists() or ctx - prev >= SLOT_GROW):
+                r = slot_action(base_url, "save", SLOT_NAME)
+                if r and r.get("n_saved"):
+                    if not isinstance(saved, dict):
+                        saved = {}
+                    saved["slot_tokens"] = ctx
+                    session_save(messages, ctx, slot_tokens=ctx)
+                    print(f"  [槽位] 已存 {r['n_saved']} tok"
+                          f"（{r.get('n_written', 0) / 1e6:.0f} MB，"
+                          f"{r.get('timings', {}).get('save_ms', 0):.0f} ms）")
         # Speed: the server already reports it in timings, but the launcher only
         # prints it in its own window. pp = prefill (new prompt this turn),
         # tg = token generation, which is the speed you actually feel.
