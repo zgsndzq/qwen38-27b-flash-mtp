@@ -1,6 +1,7 @@
 #include "speculative.h"
 
 #include "../src/llama-ext.h"
+#include "../src/llama-perf.h"
 #include "common.h"
 #include "ggml-cpp.h"
 #include "ggml.h"
@@ -4176,6 +4177,9 @@ void common_speculative_draft(common_speculative * spec) {
 }
 
 void common_speculative_accept(common_speculative * spec, llama_seq_id seq_id, uint16_t n_accepted) {
+    // instrumentation only: how many drafted tokens the target accepted this round
+    llama_perf::note_accept((int) n_accepted);
+
     common_speculative_impl * impl = spec->impl_last[seq_id];
 
     if (impl == nullptr) {

@@ -6,6 +6,7 @@
 #include "llama-ext.h"
 #include "llama-graph.h"
 #include "llama-impl.h"
+#include "llama-perf.h"
 #include "llama-io.h"
 #include "llama-kv-cache-iswa.h"
 #include "llama-kv-cache.h"
@@ -2039,6 +2040,11 @@ int llama_context::decode(const llama_batch & batch_inp) {
     // so accept either present rather than requiring exactly one.
     GGML_ASSERT(batch_inp.token || batch_inp.embd);
 
+    // optional decode instrumentation (LLAMA_PERF_LOG), a no-op when off
+    const bool   perf_on   = llama_perf::enabled();
+    const double perf_t0   = perf_on ? llama_perf::now_ms() : 0.0;
+    const int    perf_ntok = perf_on ? batch_inp.n_tokens : 0;
+
     if (!memory) {
         LLAMA_LOG_DEBUG("%s: cannot decode batches with this context (calling encode() instead)\n", __func__);
         return encode(batch_inp);
@@ -2442,6 +2448,21 @@ int llama_context::decode(const llama_batch & batch_inp) {
 
     // wait for the computation to finish (automatically done when obtaining the model output)
     //synchronize();
+
+    if (perf_on) {
+        // pos may be null (positions implied); -1 says "unknown" rather than 0
+        int perf_maxpos = -1;
+        if (batch_inp.pos != nullptr) {
+            perf_maxpos = 0;
+            for (int32_t i = 0; i < perf_ntok; ++i) {
+                if (batch_inp.pos[i] > perf_maxpos) {
+                    perf_maxpos = batch_inp.pos[i];
+                }
+            }
+        }
+        llama_perf::note_decode((int) cparams.ctx_type, perf_ntok, perf_maxpos,
+                                llama_perf::now_ms() - perf_t0);
+    }
 
     return 0;
 }
