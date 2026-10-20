@@ -9,7 +9,7 @@
 /build/
 
 # 运行时产物
-/logs/
+logs/
 *.log
 
 # 生成物与临时文件
@@ -21,4 +21,3 @@ __pycache__/
 # runtime data (sessions, KV dumps, perf csv)
 data/
 llmchat/data/
-logs/spec_dump.csv
