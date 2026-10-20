@@ -2861,12 +2861,14 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             // steps (min ~= pure-CPU floor of each bucket).
             static const bool spc_micro = std::getenv("SPC_SRV_TIMING") != nullptr;
             static int64_t m_dec = 0, m_smpl = 0, m_embd = 0, m_re = 0, m_steps = 0;
+            static int64_t m_syn = 0;   // explicit pre-sample sync: the wait we suspect in multi-slot
+            static int64_t m_rows = 0;  // total batch rows across steps: avg tells how wide the draft decode is
             static int64_t m_smpl_min = 1 << 30, m_embd_min = 1 << 30;
             auto us = [] { return ggml_time_us(); };
 
             int64_t t0 = spc_micro ? us() : 0;
             int ret = llama_decode(ctx_dft, batch);
-            if (spc_micro) { m_dec += ggml_time_us() - t0; }
+            if (spc_micro) { m_dec += ggml_time_us() - t0; m_rows += batch.n_tokens; }
             if (ret != 0) {
                 SPC_ERR("llama_decode[%d] returned %d\n", i, ret);
                 if (i == 0) {
@@ -2909,8 +2911,9 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
                 t0 = spc_micro ? us() : 0;
                 llama_token id_sampled = LLAMA_TOKEN_NULL;
+                llama_synchronize(ctx_dft);   // idempotent; timed separately so smpl no longer hides the wait
+                if (spc_micro) { m_syn += us() - t0; t0 = us(); }
                 if (!need_q && !need_sorted) {
-                    llama_synchronize(ctx_dft);
                     id_sampled = llama_get_sampled_token_ith(ctx_dft, i_last[seq_id]);
                 }
                 if (id_sampled == LLAMA_TOKEN_NULL) {
@@ -2921,13 +2924,29 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 const float * h_row = llama_get_embeddings_nextn_ith(ctx_dft, i_last[seq_id]);
                 if (spc_micro) { int64_t e = ggml_time_us() - t0; m_embd += e; if (e < m_embd_min) m_embd_min = e; }
 
-                // The candidate array is only materialised when this step reads it. Sorting it is an
-                // O(n log n) pass over the draft shortlist per step, and the only reader of the order is
-                // the p_min gate, so request the sort only then; rejection sampling is order independent.
-                const bool need_cand = need_q || need_sorted;
+                // The candidate array is only materialised when this step reads it. The sort is never
+                // needed for correctness: rejection sampling is order independent, and the p_min gate
+                // only wants the maximum probability, which a linear scan gives without the O(n log n)
+                // pass over the 24k draft shortlist. Sorting here cost more than the gate saved
+                // (measured 2026-10-20: p_min 0.45 raised acceptance 0.50 -> 0.77 but tg fell 4%).
+                // LLAMA_SPEC_DUMP=<path> also forces the array so the distribution can be recorded.
+                static const bool spc_dump = getenv("LLAMA_SPEC_DUMP") != nullptr;
+                const bool need_cand = need_q || need_sorted || spc_dump;
                 const llama_token_data_array * cur_p = need_cand
-                    ? common_sampler_get_candidates(smpl, need_sorted)
+                    ? common_sampler_get_candidates(smpl, false)
                     : nullptr;
+
+                // argmax and its probability from an unsorted array
+                int32_t i_max = -1;
+                float   p_max = -1.0f;
+                if (cur_p) {
+                    for (size_t k = 0; k < cur_p->size; ++k) {
+                        if (cur_p->data[k].p > p_max) {
+                            p_max = cur_p->data[k].p;
+                            i_max = (int32_t) cur_p->data[k].id;
+                        }
+                    }
+                }
 
                 if (cur_p) {
                     for (int k = 0; k < std::min(3, (int) cur_p->size); ++k) {
@@ -2938,7 +2957,23 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 }
 
                 // add drafted token for each sequence
-                const llama_token id = (need_sorted && !need_q) ? cur_p->data[0].id : id_sampled;
+                const llama_token id = (need_sorted && !need_q && i_max >= 0) ? (llama_token) i_max : id_sampled;
+
+                // LLAMA_SPEC_DUMP: one CSV row per draft step - chosen id, argmax id, top-3 probabilities.
+                // Off unless the env var is set. Used to measure how concentrated the draft distribution is,
+                // i.e. whether a low-rank logit correction has any headroom before building one.
+                if (spc_dump) {
+                    static FILE * spc_fp = fopen(getenv("LLAMA_SPEC_DUMP"), "a");
+                    if (spc_fp != nullptr) {
+                        const float p0 = (cur_p && cur_p->size > 0) ? cur_p->data[0].p : -1.0f;
+                        const float p1 = (cur_p && cur_p->size > 1) ? cur_p->data[1].p : -1.0f;
+                        const float p2 = (cur_p && cur_p->size > 2) ? cur_p->data[2].p : -1.0f;
+                        const int   i0 = i_max;
+                        fprintf(spc_fp, "%d,%d,%d,%d,%.5f,%.5f,%.5f,%.5f\n",
+                                (int) seq_id, i, (int) id, i0, p0, p1, p2, h_row ? h_row[0] : -1.0f);
+                        fflush(spc_fp);
+                    }
+                }
 
                 if (id < 0 || id >= llama_vocab_n_tokens(llama_model_get_vocab(llama_get_model(ctx_dft)))) {
                     SPC_ERR("draft candidate id %d out of vocab (seq_id=%d, step=%d, i_last=%d, cur_p.size=%zu) - dropping draft\n",
@@ -2951,11 +2986,18 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 // only collect very high-confidence draft tokens. The keep floor matters: a bare p_min
                 // lets step 0 abort the whole chain, so we fall back to plain decoding having already
                 // paid the fixed draft cost (measured ~2x slower); a floor only trims the deep steps.
-                if (need_sorted && i >= params.p_min_keep && cur_p->data[0].p < params.p_min) {
-                    drafting[seq_id] = false;
-                    n_drafting--;
+                // p_temp damps the raw probability first: the MTP head reports 0.82 on steps the target
+                // accepts only 0.50 of, so p^1.6 puts the gate back on the real scale.
+                if (need_sorted && i >= params.p_min_keep && p_max >= 0.0f) {
+                    const float p_gate = params.p_temp == 1.0f
+                        ? p_max
+                        : powf(p_max, params.p_temp);
+                    if (p_gate < params.p_min) {
+                        drafting[seq_id] = false;
+                        n_drafting--;
 
-                    continue;
+                        continue;
+                    }
                 }
 
                 common_sampler_accept(smpl, id, true);
@@ -3007,12 +3049,14 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             if (spc_micro) {
                 m_re += us() - t0;
                 if (++m_steps % 256 == 0) {
-                    SPC_INF("draft micro: steps=%lld dec=%.3f smpl=%.3f(min %.3f) embd=%.3f(min %.3f) rebuild=%.3f ms/step\n",
+                    SPC_INF("draft micro: steps=%lld dec=%.3f syn=%.3f smpl=%.3f(min %.3f) embd=%.3f(min %.3f) rebuild=%.3f rows=%.1f ms/step\n",
                             (long long) m_steps,
                             (double) m_dec  / m_steps / 1000.0,
+                            (double) m_syn  / m_steps / 1000.0,
                             (double) m_smpl / m_steps / 1000.0, (double) m_smpl_min / 1000.0,
                             (double) m_embd / m_steps / 1000.0, (double) m_embd_min / 1000.0,
-                            (double) m_re   / m_steps / 1000.0);
+                            (double) m_re   / m_steps / 1000.0,
+                            (double) m_rows / m_steps);
                 }
             }
 

@@ -27,10 +27,22 @@ LLAMA_API int level();
 // monotonic milliseconds, for callers that time a region themselves
 LLAMA_API double now_ms();
 
+// one graph execution, called from llama_context::graph_compute. Accumulated between
+// two note_decode calls so a decode record can say how many graphs it actually ran.
+LLAMA_API void   note_graph(double ms, int splits);
+
+// drain the accumulators (returns and resets), used by decode when it writes its record
+LLAMA_API int    graph_count_take();
+LLAMA_API double graph_ms_take();
+LLAMA_API int    graph_splits_take();
+
 // one record per llama_decode: ctx_type is llama_context_type as int (0 = target,
 // 1 = MTP/draft), n_tokens is the batch size (1 + drafts for a verify round),
-// max_pos is the highest position in the batch, ms is the wall time of the call.
-LLAMA_API void note_decode(int ctx_type, int n_tokens, int max_pos, double ms);
+// max_pos is the highest position in the batch, ms is the wall time of the call,
+// n_graphs/n_graph_ms split that time into "inside graph_compute" and "everything else"
+// (graph build, scheduler, allocator) — the only way to tell a slow kernel from slow bookkeeping.
+LLAMA_API void note_decode(int ctx_type, int n_tokens, int max_pos, double ms,
+                           int n_graphs, double graph_ms, int n_splits);
 
 // one record per speculative accept: how many drafted tokens the target accepted
 LLAMA_API void note_accept(int n_accepted);

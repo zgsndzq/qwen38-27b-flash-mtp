@@ -777,7 +777,8 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
     {
         const std::string features_path = common_params_find_features_file(argc, argv);
         if (!features_path.empty()) {
-            common_params_apply_features_file(features_path, params, ctx_arg.options);
+            const std::string features_section = common_params_find_features_section(argc, argv);
+            common_params_apply_features_file(features_path, features_section, params, ctx_arg.options);
         }
     }
 
@@ -2055,8 +2056,16 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         "environment variable (upper case, digits, underscore) is exported as an environment\n"
         "variable, any other key is an argument name without its leading dashes, for example\n"
         "  spec-draft-sampling = probabilistic\n"
+        "Keys before the first [header] or inside [common] apply to every model; a named\n"
+        "header applies only when --features-section names it.\n"
         "Read before the rest of the command line, so explicit arguments win over the file.",
         [](common_params &, const std::string &) { /* applied in common_params_parse_ex */ }
+    ));
+    add_opt(common_arg(
+        {"--features-section"}, "NAME",
+        "ada: which [name] block of the feature file to apply, e.g. qwen or lfm.\n"
+        "Keys outside any header and inside [common] are applied regardless.",
+        [](common_params &, const std::string &) { /* read in common_params_parse_ex */ }
     ));
     add_opt(common_arg(
         {"--sampler-fast-topk"}, "{auto,on,off}",
@@ -4294,6 +4303,15 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.speculative.draft.p_min = std::stof(value);
         }
     ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_SPEC_DRAFT_P_MIN"));
+    add_opt(common_arg(
+        {"--spec-draft-p-temp"}, "T",
+        string_format("ada: exponent on the draft top-1 probability used by the --spec-draft-p-min gate,\n"
+                      "p' = p^T. >1 damps an over-confident draft head, 1 = raw probability (default: %.2f)",
+                      (double)params.speculative.draft.p_temp),
+        [](common_params & params, const std::string & value) {
+            params.speculative.draft.p_temp = std::stof(value);
+        }
+    ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_SPEC_DRAFT_P_TEMP"));
     add_opt(common_arg(
         {"--spec-draft-vocab-map"}, "FNAME",
         "draft-only vocabulary shortlist for the MTP draft head (llama-mtp-vocab-v1 map); the target is unaffected (default: full vocabulary)",

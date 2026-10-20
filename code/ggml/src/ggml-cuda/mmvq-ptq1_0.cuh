@@ -33,7 +33,7 @@
 // dedicated 2D kernel geometry, see mul_mat_vec_ptq1_0_pt below
 #define PTQ1_0_PT_THREADS      128
 #define PTQ1_0_PT_MAX_ROWS     16
-#define PTQ1_0_PT_MAX_COLS     8    // equals MMVQ_MAX_BATCH_SIZE, checked in mmvq.cu
+#define PTQ1_0_PT_MAX_COLS     12   // 2 slots x (1 token + up to 5 MTP drafts); see mmvq.cu max_cols
 #define PTQ1_0_PT_SMEM_FLOATS  4096 // 16 KiB target when choosing rows per CTA; the launch may request more for one item
 
 // the PT path is CUDA only; HIP keeps the block_q8_1 layout and the old vec_dot
@@ -311,7 +311,11 @@ static __host__ int ptq1_0_pt_rows_per_cta(const int blocks_per_row, const int n
 // Same row-per-item rule the launcher instantiates. Multi-column paths retain
 // their existing 4/2-row schedule.
 static constexpr __host__ __device__ int ptq1_0_pt_rows_per_item(const int ncols_dst) {
-    return ncols_dst <= 2 ? 4 : (ncols_dst <= 4 ? PTQ1_0_PT_ROWS_34 : PTQ1_0_PT_ROWS_5P);
+    // 9+ columns (two slots with MTP drafts) get 2 rows per thread: dots[ncols][ROWS] would
+    // otherwise cost 40+ registers on top of the 5-column geometry, and MINB_5P caps ptxas at
+    // 170 regs -- the overflow spills to local memory and costs ~10x. Two rows also doubles the
+    // CTA count, which is what the weight stream needs to fill the memory pipeline.
+    return ncols_dst <= 2 ? 4 : (ncols_dst <= 4 ? PTQ1_0_PT_ROWS_34 : (ncols_dst <= 5 ? PTQ1_0_PT_ROWS_5P : 1));
 }
 
 // The one-row tile is tuned on sm_86. Other devices keep the four-row baseline,
@@ -596,6 +600,13 @@ static bool mul_mat_vec_ptq1_0_pt_switch(
         case 6: mul_mat_vec_ptq1_0_pt_launch<6>(vx, vy, fusion, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream); break;
         case 7: mul_mat_vec_ptq1_0_pt_launch<7>(vx, vy, fusion, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream); break;
         case 8: mul_mat_vec_ptq1_0_pt_launch<8>(vx, vy, fusion, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream); break;
+        // 9..12: two slots plus MTP drafts (2x5, 2x6) no longer fall back to the MMQ tile path.
+        // The weight read is unchanged (rows_per_cta stays at the ROWS_5P floor), so the extra
+        // columns are served from the same 18.6 MiB pass over the matrix.
+        case 9:  mul_mat_vec_ptq1_0_pt_launch<9> (vx, vy, fusion, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream); break;
+        case 10: mul_mat_vec_ptq1_0_pt_launch<10>(vx, vy, fusion, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream); break;
+        case 11: mul_mat_vec_ptq1_0_pt_launch<11>(vx, vy, fusion, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream); break;
+        case 12: mul_mat_vec_ptq1_0_pt_launch<12>(vx, vy, fusion, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream); break;
         default: return false;
     }
     return true;

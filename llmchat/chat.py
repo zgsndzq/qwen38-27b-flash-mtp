@@ -208,7 +208,7 @@ def probe(base_url, timeout=5.0):
 
 
 def chat_sse(messages, base_url, temperature, max_new_tokens=None, on_delta=None,
-             think=None, effort=None, timeout=DEFAULT_TIMEOUT):
+             think=None, effort=None, timeout=DEFAULT_TIMEOUT, id_slot=None, cache_prompt=None):
     """流式 chat：SSE 逐增量回调 on_delta(kind, text)。
 
     - temperature 传数字会顶掉服务端 --temp；None = 不下发，沿用服务端
@@ -217,6 +217,10 @@ def chat_sse(messages, base_url, temperature, max_new_tokens=None, on_delta=None
     返回 (reasoning, content) 完整拼接。
     """
     body = {"model": "gguf", "messages": messages, "stream": True}
+    if id_slot is not None:
+        body["id_slot"] = int(id_slot)     # 钉在指定槽：双会话各自绑定，KV 才能复用
+    if cache_prompt is not None:
+        body["cache_prompt"] = bool(cache_prompt)
     if temperature is not None:
         body["temperature"] = temperature
     if max_new_tokens is not None:
@@ -265,6 +269,10 @@ def chat_sse(messages, base_url, temperature, max_new_tokens=None, on_delta=None
             hint = (f"\n等待 {timeout:.0f}s 内服务端无任何数据。若是长提示词/长上下文，"
                     f"这是预填充耗时过长（不是服务没起来）；\n"
                     f"调大环境变量 LLAMA_CHAT_TIMEOUT（秒）或加 --timeout 1200 即可。")
+        elif "400" in str(e):
+            hint = ("\n服务端拒绝了请求（400）。最常见的原因：当前会话长度超过了服务端单槽的"
+                    "上下文容量（比如双槽 32K 时每槽只有 16384 tok）。\n"
+                    "在 llmchat 里输入 clear 清空本会话即可继续；或把服务端切回大上下文配置。")
         raise ConnectionError(
             f"llama-server 流式调用失败（{base_url}）：{e}{hint}") from e
     return "".join(reasoning), "".join(content), (timings or {})
@@ -364,20 +372,39 @@ MEM_DIR = Path(__file__).resolve().with_name("mem")
 # 继续同一段对话只读回槽位、不重算整段 prompt：16k 前缀约从 50 s 变成 1 s 级。
 # 前提是**新请求必须是已存 token 的延长**；中间改过历史就退化成全量重读，不会出错。
 # --------------------------------------------------------------------------
-SESSION_FILE = Path(__file__).resolve().parent.parent / "logs" / "llmchat_session.json"
+DATA_DIR = Path(__file__).resolve().parent / "data"          # 运行数据（不属于 logs/，删 logs 不影响）
+SESSION_FILE = DATA_DIR / "llmchat_session.json"
 SLOT_NAME = "llmchat.slot"
-SLOT_FILE = Path(__file__).resolve().parent.parent / "logs" / "slots" / SLOT_NAME
+SLOT_FILE = Path(__file__).resolve().parent.parent / "data" / "slots" / SLOT_NAME
 SLOT_MIN = int(os.environ.get("LLAMA_SLOT_MIN", "8192"))   # 短于这个长度不值得来回存盘
 SLOT_GROW = int(os.environ.get("LLAMA_SLOT_GROW", "2048"))  # 上下文长这么多才重存一次（439MB 不便宜）
 _slot_off = False                                          # 服务端没配 --slot-save-path 时置位
 
 
-def slot_action(base_url, action, filename=None, timeout=180):
+def apply_profile(base_url):
+    """按端口给会话与 KV 存档加后缀，两个模型的对话不会混在同一个文件里。
+
+    18080（默认端口）保持原文件名，老会话不受影响；其它端口（18081 = LFM）加 _<port>。
+    参数是已经 rstrip('/') 过的 base_url。
+    """
+    global SESSION_FILE, SLOT_NAME, SLOT_FILE
+    try:
+        port = str(urllib.parse.urlparse(base_url).port or "")
+    except ValueError:
+        port = ""
+    if not port or port == "18080":
+        return
+    SESSION_FILE = DATA_DIR / f"llmchat_session_{port}.json"
+    SLOT_NAME = f"llmchat_{port}.slot"
+    SLOT_FILE = Path(__file__).resolve().parent.parent / "data" / "slots" / SLOT_NAME
+
+
+def slot_action(base_url, action, filename=None, timeout=180, slot_id=0):
     """POST /slots/0?action=...；文件名走 JSON body（这个构建的路由是 POST，GET 会 404）。"""
     global _slot_off
     if _slot_off and action != "erase":
         return None
-    url = f"{base_url}/slots/0?action={action}"
+    url = f"{base_url}/slots/{int(slot_id)}?action={action}"
     body = json.dumps({"filename": filename} if filename else {}).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST",
                                  headers={"Content-Type": "application/json"})
@@ -558,6 +585,7 @@ def main(argv=None):
     think_flag = _parse_think(a.think)
     timeout = a.timeout or DEFAULT_TIMEOUT
     base_url = a.base_url.rstrip("/")
+    apply_profile(base_url)
 
     # Probe the server and show the model it actually loaded.
     ok, model_id, err = probe(base_url)

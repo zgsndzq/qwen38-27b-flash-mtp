@@ -46,8 +46,14 @@ set "DRAFT_N=4"
 rem ngram lookup drafter. NMATCH = preceding tokens that must match before it looks,
 rem NGMIN = minimum consecutive match to fire, NGMAX / LOOKUP_N = per-draft caps.
 set "NMATCH=24"
+rem BENCH=1 keeps the MTP draft head and drops the ngram lookup drafter. The ngram cache
+rem fills up over a conversation, so a cold first request (~46 t/s) and a warm sixth (~177)
+rem are not comparable -- set this to 1 when timing an A/B, back to 0 for production.
+set "BENCH=0"
+set "SPECTYPE=ngram-mod,draft-mtp-adaptive"
+if "%BENCH%"=="1" set "SPECTYPE=draft-mtp-adaptive"
 set "NGMIN=24"
-set "NGMAX=64"
+set "NGMAX=24"
 set "LOOKUP_N=%NGMAX%"
 
 title Qwen3.8-27B-Flash-MTP :18080
@@ -58,7 +64,7 @@ ping -n 3 127.0.0.1 >nul
 
 rem vision projector. VISION=1 mounts it, but only when the file is actually there.
 rem Without mmproj the server refuses every image request, so mount what exists only.
-set "VISION=1"
+set "VISION=0"
 set "MMPROJ=%~dp0weights\mmproj-Qwen3.8-27B-Q8_0.gguf"
 set "VISARG="
 if "%VISION%"=="1" if exist "%MMPROJ%" (
@@ -69,17 +75,17 @@ if "%VISION%"=="1" if exist "%MMPROJ%" (
 
 rem KV 槽位存盘目录：llmchat 用它保存/恢复整段 KV（重启后秒续同一段对话）。
 rem 每个槽位文件约 18 KB/token（16k 前缀 ≈ 290 MB），放 logs 下不进 git。
-if not exist "%~dp0logs\slots" mkdir "%~dp0logs\slots"
+if not exist "%~dp0data\slots" mkdir "%~dp0data\slots"
 
 "%SERVER%\llama-server.exe" -m "%~dp0weights\%MODEL%" ^
   --host 127.0.0.1 --port 18080 --parallel 1 -rea off --no-ui ^
-  --slot-save-path "%~dp0logs\slots" ^
+  --slot-save-path "%~dp0data\slots" ^
   -c %CTX% -b 4096 -t 8 -ngl 99 -fa on -ctk %CTK% -ctv %CTV% ^
   --reasoning-budget %REBUDGET% ^
-  --spec-type ngram-mod,draft-mtp-adaptive --spec-draft-n-max %DRAFT_N% ^
+  --spec-type %SPECTYPE% --spec-draft-n-max %DRAFT_N% ^
   --spec-lookup-n-max %LOOKUP_N% --spec-ngram-mod-n-min %NGMIN% ^
   --spec-ngram-mod-n-max %NGMAX% ^
   --spec-ngram-mod-n-match %NMATCH% ^
-  --features-file features.ini ^
+  --features-file features.ini --features-section qwen ^
   --alias "Qwen3.8-27B-Flash-MTP" ^
   %VISARG%

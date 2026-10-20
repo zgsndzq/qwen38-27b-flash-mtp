@@ -25,7 +25,14 @@
 // Apply the feature file. Returns the number of switches that were applied.
 // Unknown keys and malformed values are reported and skipped, never fatal - a
 // stale line must not be able to stop the server from starting.
+//
+// `section` selects which [name] block to apply, so one file can serve several
+// models: keys before the first header (or inside [common]) apply to every
+// model, keys inside [qwen] only when section == "qwen", and so on. An empty
+// section applies only the unsectioned keys, which is what a file without any
+// header still means.
 int common_params_apply_features_file(const std::string & path,
+                                      const std::string & section,
                                       common_params & params,
                                       const std::vector<common_arg> & options);
 
@@ -33,3 +40,6 @@ int common_params_apply_features_file(const std::string & path,
 // has to be known before the command line is parsed, so that explicit arguments
 // still override whatever the file says.
 std::string common_params_find_features_file(int argc, char ** argv);
+
+// Same for "--features-section <name>" / "--features-section=<name>".
+std::string common_params_find_features_section(int argc, char ** argv);

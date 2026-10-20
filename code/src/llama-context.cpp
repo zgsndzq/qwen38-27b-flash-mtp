@@ -2461,7 +2461,9 @@ int llama_context::decode(const llama_batch & batch_inp) {
             }
         }
         llama_perf::note_decode((int) cparams.ctx_type, perf_ntok, perf_maxpos,
-                                llama_perf::now_ms() - perf_t0);
+                                llama_perf::now_ms() - perf_t0,
+                                llama_perf::graph_count_take(), llama_perf::graph_ms_take(),
+                                llama_perf::graph_splits_take());
     }
 
     return 0;
@@ -2966,9 +2968,17 @@ ggml_status llama_context::graph_compute(
         set_n_threads_fn.second(set_n_threads_fn.first, n_threads);
     }
 
+    // instrumentation: how long this graph takes to enqueue+run (async may block on a full queue)
+    const bool   perf_on  = llama_perf::enabled();
+    const double perf_t0  = perf_on ? llama_perf::now_ms() : 0.0;
+
     auto status = ggml_backend_sched_graph_compute_async(sched.get(), gf);
     if (status != GGML_STATUS_SUCCESS) {
         LLAMA_LOG_ERROR("%s: ggml_backend_sched_graph_compute_async failed with error %d\n", __func__, status);
+    }
+
+    if (perf_on) {
+        llama_perf::note_graph(llama_perf::now_ms() - perf_t0, (int) ggml_backend_sched_get_n_splits(sched.get()));
     }
 
     // fprintf(stderr, "splits: %d\n", ggml_backend_sched_get_n_splits(sched));

@@ -341,6 +341,12 @@ struct common_params_speculative_draft {
     float p_split = 0.1f; // speculative decoding split probability
     float p_min   = 0.0f; // minimum speculative decoding probability (greedy)
 
+    // Exponent applied to the draft's own top-1 probability before the p_min gate: p' = p^p_temp.
+    // The MTP head is measurably over-confident (it reports 0.82 on steps the target accepts 0.50
+    // of), so >1 damps the gate and stops paying draft+verify for steps that will be rejected;
+    // <1 sharpens it. 1.0 gates on the raw probability, i.e. the historical behaviour.
+    float p_temp  = 1.0f;
+
     // minimum number of draft tokens that p_min is not allowed to cut. A bare p_min lets the very first step
     // abort the whole chain and drop back to plain decoding while the fixed draft cost is still paid, which
     // measured as a ~2x slowdown; with a keep floor p_min only trims the deep, already-unlikely steps.

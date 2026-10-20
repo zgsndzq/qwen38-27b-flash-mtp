@@ -2,6 +2,7 @@
 
 #include "common.cuh"
 #include "cp-async.cuh"
+#include "ggml-cuda-dbg.h"
 
 #include <climits>
 #include <cstdint>
@@ -1600,6 +1601,20 @@ void mul_mat_q_switch_J(ggml_backend_cuda_context & ctx, const mmq_args & args, 
         if (ntiles_x < ntiles_J_best) {
             J_best = J;
             ntiles_J_best = ntiles_x;
+        }
+    }
+
+    // GGML_CUDA_MMQ_LOG=1: one line per dispatch, so we can see which tile the
+    // heuristic actually picked for our batch shapes instead of guessing.
+    // Goes to GGML_CUDA_LOG_FILE (never the console) via ggml-cuda-dbg.h.
+    {
+        static const bool mmq_log = [] {
+            const char * e = getenv("GGML_CUDA_MMQ_LOG");
+            return e && atoi(e) != 0;
+        }();
+        if (mmq_log) {
+            ggml_cuda_dbg_log("mmq: type=%d ncols=%d J=%d fallback=%d tiles=%d\n",
+                              (int) type, args.ncols_max, J_best, (int) fallback, ntiles_J_best);
         }
     }
 

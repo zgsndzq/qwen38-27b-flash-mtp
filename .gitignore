@@ -17,3 +17,8 @@
 __pycache__/
 *.pyc
 /.workbuddy/
+
+# runtime data (sessions, KV dumps, perf csv)
+data/
+llmchat/data/
+logs/spec_dump.csv

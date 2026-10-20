@@ -40,15 +40,22 @@ std::string rm_dashes(const std::string & s) {
     return s.substr(i);
 }
 
-// Flat INI: one "key = value" per line, '#' or ';' starts a comment, and
-// "[section]" headers are accepted for grouping and otherwise ignored.
-std::vector<std::pair<std::string, std::string>> read_ini(const std::string & path) {
+// Flat INI: one "key = value" per line, '#' or ';' starts a comment, and a
+// "[section]" header starts a block of keys that only one model applies.
+struct feature_line {
+    std::string section;
+    std::string key;
+    std::string value;
+};
+
+std::vector<feature_line> read_ini(const std::string & path) {
     std::ifstream file(path);
     if (!file.good()) {
         throw std::runtime_error("ada: cannot open feature file: " + path);
     }
 
-    std::vector<std::pair<std::string, std::string>> out;
+    std::vector<feature_line> out;
+    std::string section;
     std::string line;
     while (std::getline(file, line)) {
         const auto comment = line.find_first_of("#;");
@@ -56,7 +63,13 @@ std::vector<std::pair<std::string, std::string>> read_ini(const std::string & pa
             line = line.substr(0, comment);
         }
         line = strip(line);
-        if (line.empty() || line.front() == '[') {
+        if (line.empty()) {
+            continue;
+        }
+        if (line.front() == '[') {
+            const auto close = line.find(']');
+            section = close == std::string::npos ? strip(line.substr(1))
+                                                 : strip(line.substr(1, close - 1));
             continue;
         }
 
@@ -72,7 +85,7 @@ std::vector<std::pair<std::string, std::string>> read_ini(const std::string & pa
             LOG_WRN("ada: feature file, empty key ignored\n");
             continue;
         }
-        out.emplace_back(key, val);
+        out.push_back({section, key, val});
     }
     return out;
 }
@@ -94,6 +107,7 @@ std::string common_params_find_features_file(int argc, char ** argv) {
 }
 
 int common_params_apply_features_file(const std::string & path,
+                                      const std::string & section,
                                       common_params & params,
                                       const std::vector<common_arg> & options) {
     // an option can be addressed by any of its names: its environment variable or
@@ -110,8 +124,17 @@ int common_params_apply_features_file(const std::string & path,
 
     int applied = 0;
     int ignored = 0;
+    int skipped = 0;
 
-    for (const auto & [key, value] : read_ini(path)) {
+    for (const auto & e : read_ini(path)) {
+        // three tiers: no header or [common] applies to every model, a named
+        // header applies only when --features-section names it
+        if (!e.section.empty() && e.section != "common" && e.section != section) {
+            ++skipped;
+            continue;
+        }
+        const std::string & key   = e.key;
+        const std::string & value = e.value;
         try {
             if (is_env_name(key) && key_to_opt.find(key) == key_to_opt.end()) {
                 common_set_env(key, value);
@@ -157,6 +180,21 @@ int common_params_apply_features_file(const std::string & path,
         }
     }
 
-    LOG_INF("ada: feature file %s -> %d applied, %d ignored\n", path.c_str(), applied, ignored);
+    LOG_INF("ada: feature file %s [section=%s] -> %d applied, %d ignored, %d skipped\n",
+            path.c_str(), section.empty() ? "-" : section.c_str(), applied, ignored, skipped);
     return applied;
+}
+
+std::string common_params_find_features_section(int argc, char ** argv) {
+    const std::string eq_form = "--features-section=";
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i] == nullptr ? "" : argv[i];
+        if (arg.compare(0, eq_form.size(), eq_form) == 0) {
+            return arg.substr(eq_form.size());
+        }
+        if (arg == "--features-section" && i + 1 < argc && argv[i + 1] != nullptr) {
+            return argv[i + 1];
+        }
+    }
+    return "";
 }

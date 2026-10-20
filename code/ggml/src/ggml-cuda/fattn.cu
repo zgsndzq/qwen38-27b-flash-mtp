@@ -1,4 +1,5 @@
 #include "common.cuh"
+#include "ggml-cuda-dbg.h"
 #include "fattn-common.cuh"
 #include "fattn-mma-f16.cuh"
 #include "fattn-tile.cuh"
@@ -617,6 +618,23 @@ size_t ggml_cuda_flash_attn_ext_get_alloc_size(int device, const ggml_tensor * d
     GGML_ASSERT(V != nullptr);
 
     const best_fattn_kernel kernel = ggml_cuda_get_best_fattn_kernel(device, dst);
+
+    // GGML_CUDA_FA_LOG=1: which flash-attention kernel each op takes, so the routing can
+    // be checked instead of guessed. One line per op; T06 uses it.
+    // Goes to GGML_CUDA_LOG_FILE (never the console) via ggml-cuda-dbg.h.
+    {
+        static const bool fa_log = [] {
+            const char * e = getenv("GGML_CUDA_FA_LOG");
+            return e && atoi(e) != 0;
+        }();
+        if (fa_log) {
+            const ggml_tensor * Q = dst->src[0];
+            const ggml_tensor * K = dst->src[1];
+            ggml_cuda_dbg_log("fattn: kernel=%d gqa=%d ncols=%d n_kv=%lld dkq=%lld type_k=%d native=%d\n",
+                              (int) kernel, (int) (Q->ne[2] / K->ne[2]), (int) Q->ne[1], (long long) K->ne[1],
+                              (long long) K->ne[0], (int) K->type, (int) ggml_cuda_fattn_mma_kv_native_supported(dst));
+        }
+    }
 
     bool need_f16_K = false;
     bool need_f16_V = false;
