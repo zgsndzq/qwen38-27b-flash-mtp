@@ -110,10 +110,29 @@ p0 ≥ 0.90 的步占 47.5%
 - `GGML_CUDA_PTQ1_MMVQ_MAX=8`：让 6~8 列走 matvec，反而更慢（cols=5 时 MMVQ 2.226ms vs MMQ 0.658ms）。
 - `GGML_CUDA_PTQ1_MMVQ_MAX=24`：超过 `MMVQ_MAX_BATCH_SIZE` 硬上限，**assert 直接崩服务**。
 
-### 1.6 FA 多流降级 / chunked 路径 — 负例（不适用）
+### 1.6 FA 多流降级 / chunked 路径 — **撤回这条负例，它当时是错的**（2026-10-21 纠正）
 
-chunked 路径要求 `K->ne[1] > 8192`，而 decode 阶段 K 的长度就是上下文本身，
-不满足时自动退回；**对 decode 没有意义**，只影响 prefill。
+原结论写的是"chunked 路径对 decode 没有意义，只影响 prefill"，据此认定 prefill 慢是设计使然。
+**错在：正因为它只影响 prefill，才要命。** 128K prefill 是 Agent 场景的关键路径，
+而当时 `GGML_CUDA_FA_CHUNK` 被调到 8192，让**所有超过 8K 的 prefill 都掉进慢路径**。
+
+chunked 的判定是 `K->ne[1] > C`（C = FA_CHUNK）：KV 一旦长过 C，就不再原地读量化 K/V，
+改成「每块拷到显存 → 转 f16 → 跑 f16 kernel → 折叠结果」。所以 **C 是慢路径的触发阈值，
+不是显存调节旋钮**。
+
+实测（`logs/perf.csv`，target prefill，4096-token 分块，同一二进制，BENCH=1）：
+
+| 上下文 | 4K | 8K | 12K | 16K | 32K | 41K |
+|---|---|---|---|---|---|---|
+| C=8192 | 559 t/s | 563 t/s | **92** | 66 | 33 | 26 |
+| C=65536 | 559 t/s | 563 t/s | 预测回到 560 一线 | | | |
+
+8K → 12K 的 6 倍断崖**正好落在 C=8192 的触发点上**，不是深度衰减该有的平滑曲线。
+C 已改回 65536（与 `kv-vram-cells=65536` 对齐），并在 `features.ini` 里写明不要再往下调。
+
+**教训**：判断一个开关有没有用，不能只看它影响哪个阶段。对 decode 无害的东西，
+可能正好毁掉 prefill。测「128K 慢」时要按max_pos 分段看速率曲线——平滑衰减是深度问题，
+断崖是开关问题，两者处置完全不同。
 
 ### 1.7 GDN 双流税 — 撤回（无证据）
 
@@ -269,3 +288,45 @@ kv-vram-cells = 0
 6. **`git diff --stat` 报几千行** 通常是换行符（CRLF/LF）整体翻转，不是代码改动；
    提交前按 HEAD 的换行符逐个恢复。
 7. **短 prompt + 非流式请求会高估收益**（见第 0 节的 ngram 效应）。
+
+---
+
+## 6. KV 量化：q3_0 这条线路在本树不存在（2026-10-21 核查）
+
+想上128K 的低精度 KV 以省显存，先核实了q3_0。结论：**它不是一个现成选项，要从零实现。**
+
+### 6.1 q3_0 在本树全链路缺失
+
+全树搜 `GGML_TYPE_Q3_0` 零命中。逐环节确认：
+
+| 环节 | 现状 |
+|---|---|
+| `ggml/include/ggml.h`枚举 | 无 `GGML_TYPE_Q3_0`。私有槽位 43..141 空着（`PQ2_0=142`、`PTQ1_0=143` 占高位） |
+| `ggml-common.h` | 无 `block_q3_0` 结构定义 |
+| `ggml.c` / `ggml-quants.c` | 无 type_traits、无 `quantize_row_q3_0_ref`、无 `dequantize_row_q3_0` |
+| CUDA `convert.cu` | 无 Q3_0 分支（对照：`Q1_0`、`Q2_0` 都有） |
+| CUDA `common.cuh` | 无 `ggml_cuda_type_traits<GGML_TYPE_Q3_0>` |
+| FA `fattn-common.cuh` | `get_vec_dot_KQ()` 与 `get_dequantize_V()` 只分发 F16/BF16/Q4_0/Q4_1/Q5_0/Q5_1/Q8_0 |
+| `fattn.cu` | `ggml_cuda_fattn_kv_type_supported()` 白名单同上|
+| `common/arg.cpp` | `kv_cache_types` 白名单 9 种，不含 Q3_0 |
+
+**含义**：要支持 q3_0 KV，必须新增枚举 + block 结构 + CPU 量化/反量化 + CUDA 转换 +
+type_traits + FA 的 `vec_dot_KQ_q3_0` 与 `dequantize_V_q3_0`，并且 vec / tile / mma-f16
+**三套**内核都要有模板实例化。漏掉任一套会静默回退到 f16 中转，收益归零。
+
+### 6.2 精度问题的正确表述（不是"越读越飘"）
+
+常见误解是"KV 量化误差随上下文变长而累积"。**不成立**：每个 token 的 K/V 是独立量化
+写入 cache 的定点误差，没有跨 token 的递推累加路径。128K 不会比 8K 偏得更远。
+
+真正的风险是**检索任务对 K 敏感度的放大**：上下文越长，"大海捞针"越依赖精确点积匹配，
+K 的量化误差在这个任务上被放大。而 V 的误差宽容度高得多（V 参与加权求和，误差被平均；
+K 进入 softmax 前的 logits，误差直接改变注意力分布）。
+
+因此业界常规做法是 **K 保精度、V 可降精度**，`-ctk` 与 `-ctv` 不必取同一档。
+
+### 6.3 决策前提
+
+不要在没测出q4_0 -> q5_0 的 logit KLD 之前就投入 q3_0 实现。
+若 q4_0 与 q5_0 的 KLD 已经很小，说明瓶颈不在 KV 精度，q3_0 的六个环节就是白做。
+正确的顺序是：先实测 K/V 量化敏感性，再决定是否值得新增类型。

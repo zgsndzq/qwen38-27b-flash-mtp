@@ -24,3 +24,5 @@ __pycache__/
 # runtime data (sessions, KV dumps, perf csv)
 data/
 llmchat/data/
+# Sage-A1.5 Q4_K_M GGUF, 20.2 GB (background download, never in Git)
+weights/sage-a15/
