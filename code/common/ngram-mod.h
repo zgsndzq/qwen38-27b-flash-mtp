@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 #include <cstddef>
+#include <string>
 
 //
 // common_ngram_mod
@@ -28,6 +29,12 @@ struct common_ngram_mod {
 
     size_t size()       const;
     size_t size_bytes() const;
+
+    // persistence of the ngram table. the file carries the n-gram length and the
+    // table size, so a table from another model (or another n) is refused instead
+    // of silently poisoning the lookups.
+    bool save(const std::string & path) const;
+    bool load(const std::string & path);
 
 private:
     size_t n; // ngram size to hash

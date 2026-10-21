@@ -32,6 +32,11 @@ void llama_model_eagle3::load_arch_hparams(llama_model_loader & ml) {
     // compatible with eagle3.1 (e.g. nvidia/gpt-oss-120b-Eagle3-v3)
     ml.get_key(LLM_KV_NORM_BEFORE_FC, hparams.norm_before_fc, false);
 
+    // eagle4 'norm_output': the next draft step takes the normed sum, not the pre-norm state
+    if (ml.get_key(LLM_KV_NORM_OUTPUT, hparams.norm_output, false) && hparams.norm_output) {
+        LLAMA_LOG_INFO("%s: EAGLE4 norm_output enabled\n", __func__);
+    }
+
     type = LLM_TYPE_UNKNOWN;
 }
 
@@ -56,6 +61,15 @@ void llama_model_eagle3::load_arch_tensors(llama_model_loader &) {
 
     // Feature fusion layer: projects 3 target layers to draft hidden size
     fc = create_tensor(tn(LLM_TENSOR_FC, "weight"), {n_embd_inp, n_embd}, 0);
+
+    // eagle4: one RMSNorm per aux hidden state, applied before the concat into fc
+    const int64_t n_embd_aux = n_embd_inp / 3;
+    fc_norm_0 = create_tensor(tn(LLM_TENSOR_FC_NORM_0, "weight"), {n_embd_aux}, TENSOR_NOT_REQUIRED);
+    if (fc_norm_0) {
+        fc_norm_1 = create_tensor(tn(LLM_TENSOR_FC_NORM_1, "weight"), {n_embd_aux}, 0);
+        fc_norm_2 = create_tensor(tn(LLM_TENSOR_FC_NORM_2, "weight"), {n_embd_aux}, 0);
+        LLAMA_LOG_INFO("%s: EAGLE4 per-aux fc_norm enabled (n_embd_aux = %d)\n", __func__, (int) n_embd_aux);
+    }
 
     // RMSNorm on the fused target features (input to fc), only when norm_before_fc is set.
     if (hparams.norm_before_fc) {
@@ -139,6 +153,20 @@ llama_model_eagle3::graph<true>::graph(const llama_model & model, const llm_grap
 
     cur = build_inp_embd_enc();
 
+    // eagle4: the three aux hidden states are normalized separately, then concatenated
+    if (model.fc_norm_0) {
+        const int64_t aux = cur->ne[0] / 3;
+        ggml_tensor * parts[3];
+        ggml_tensor * norms[3] = { model.fc_norm_0, model.fc_norm_1, model.fc_norm_2 };
+        for (int i = 0; i < 3; ++i) {
+            ggml_tensor * v = ggml_view_2d(ctx0, cur, aux, cur->ne[1], cur->nb[1],
+                    (size_t) i * aux * ggml_element_size(cur));
+            parts[i] = build_norm(ggml_cont(ctx0, v), norms[i], NULL, LLM_NORM_RMS, -1);
+        }
+        cur = ggml_concat(ctx0, ggml_concat(ctx0, parts[0], parts[1], 0), parts[2], 0);
+        cb(cur, "enc_fc_norm", -1);
+    }
+
     // RMSNorm on the fused target features before fc
     if (hparams.norm_before_fc) {
         cur = build_norm(cur, model.output_norm_enc, NULL, LLM_NORM_RMS, -1);
@@ -190,7 +218,9 @@ llama_model_eagle3::graph<false>::graph(const llama_model & model, const llm_gra
     inp->embd = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd, n_tokens);
     ggml_set_input(inp->embd);
 
-    ggml_tensor * inp_embd = ggml_get_rows(ctx0, tok_embd, inp->tokens);
+    // restores the primal basis when the target table is Hadamard-folded, which the
+    // fork's graph verifier requires
+    ggml_tensor * inp_embd = build_embd_rows(tok_embd, inp->tokens);
     cb(inp_embd, "inp_embd", -1);
 
     ggml_tensor * inp_g = inp->embd;
@@ -295,14 +325,25 @@ llama_model_eagle3::graph<false>::graph(const llama_model & model, const llm_gra
 
     cur = inpL;
 
-    // Output prenorm state (for next token's g_embeddings in autoregressive generation)
-    ggml_set_output(cur);
-    res->t_h_nextn = cur;
+    // eagle4 'norm_output': the reference returns the normed sum, so that is what feeds the
+    // next draft step; eagle3 keeps the pre-norm state.
+    if (hparams.norm_output) {
+        cur = build_norm(cur,
+                model.output_norm, NULL,
+                LLM_NORM_RMS, -1);
+        cb(cur, "result_norm", -1);
 
-    cur = build_norm(cur,
-            model.output_norm, NULL,
-            LLM_NORM_RMS, -1);
-    cb(cur, "result_norm", -1);
+        ggml_set_output(cur);
+        res->t_h_nextn = cur;
+    } else {
+        ggml_set_output(cur);
+        res->t_h_nextn = cur;
+
+        cur = build_norm(cur,
+                model.output_norm, NULL,
+                LLM_NORM_RMS, -1);
+        cb(cur, "result_norm", -1);
+    }
 
     // lm_head - projects to draft vocabulary
     // if the draft has no own output projection, inherit the target model's lm_head

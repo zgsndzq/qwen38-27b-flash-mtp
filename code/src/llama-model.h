@@ -645,6 +645,10 @@ struct llama_model {
 
     // eagle3 / dflash feature fusion layer
     struct ggml_tensor * fc   = nullptr;
+    // eagle4: one RMSNorm per aux hidden state, applied before the concat into fc
+    struct ggml_tensor * fc_norm_0 = nullptr;
+    struct ggml_tensor * fc_norm_1 = nullptr;
+    struct ggml_tensor * fc_norm_2 = nullptr;
     struct ggml_tensor * fc_s = nullptr;
     struct ggml_tensor * d2t = nullptr;  // draft to target vocabulary mapping
 

@@ -413,6 +413,7 @@ enum llm_kv {
     LLM_KV_DFLASH_SELECTOR_TOP_K,
     LLM_KV_NORM_BEFORE_RESIDUAL,
     LLM_KV_NORM_BEFORE_FC,
+    LLM_KV_NORM_OUTPUT,
 
     LLM_KV_SHORTCONV_L_CACHE,
 
@@ -679,6 +680,9 @@ enum llm_tensor {
     LLM_TENSOR_MASKED_EMBD_CENTROIDS,
     LLM_TENSOR_MASKED_EMBD_ORDERING,
     LLM_TENSOR_FC,
+    LLM_TENSOR_FC_NORM_0, // eagle4: per-aux RMSNorm, applied before the concat
+    LLM_TENSOR_FC_NORM_1,
+    LLM_TENSOR_FC_NORM_2,
     LLM_TENSOR_D2T,
     // dspark drafter tensors. The decoder blocks reuse the standard
     // LLM_TENSOR_ATTN_* / LLM_TENSOR_FFN_* / LLM_TENSOR_OUTPUT_NORM /

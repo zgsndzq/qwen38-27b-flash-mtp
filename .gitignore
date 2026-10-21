@@ -12,6 +12,9 @@
 logs/
 *.log
 
+# EAGLE-4 草稿的原始权重与 target 描述（只在转换时用，不进 Git）
+weights/eagle4*/
+
 # 生成物与临时文件
 /tmp/
 __pycache__/

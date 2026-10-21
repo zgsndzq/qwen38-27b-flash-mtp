@@ -4459,6 +4459,16 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}));
 
     add_opt(common_arg(
+        {"--spec-ngram-mod-cache"}, "FILE",
+        "file the ngram-mod table is loaded from at start and written back to while running.\n"
+        "the table is a fixed 16 MB hash of n-grams, so keeping it on disk makes the\n"
+        "next session start warm instead of rebuilding the cache over a few rounds",
+        [](common_params & params, const std::string & value) {
+            params.speculative.ngram_mod.cache_path = value;
+        }
+    ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}));
+
+    add_opt(common_arg(
         {"--spec-ngram-simple-size-n"}, "N",
         string_format("ngram size N for ngram-simple speculative decoding, length of lookup n-gram (default: %d)", params.speculative.ngram_simple.size_n),
         [](common_params & params, int value) {

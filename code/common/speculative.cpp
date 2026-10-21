@@ -27,6 +27,7 @@
 #include "speculative-adaptive.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cassert>
 #include <cinttypes>
 #include <cstdlib>
@@ -1351,6 +1352,7 @@ struct common_speculative_impl_draft_eagle3 : public common_speculative_impl {
         }
         llama_batch_free(batch);
     }
+
 
     void begin(llama_seq_id seq_id, const llama_tokens & prompt) override {
         const int32_t N = (int32_t) prompt.size();
@@ -3223,6 +3225,10 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
     // shared across all sequences
     common_ngram_mod mod;
 
+    // the cache is written back at most once per interval, and only when the table changed
+    bool                        cache_dirty     = false;
+    std::chrono::steady_clock::time_point cache_last_save;
+
     // enable trace logging if LLAMA_TRACE is set
     const bool verbose;
 
@@ -3260,6 +3266,42 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
         }
 
         sinfos.resize(n_seq);
+
+        if (!this->params.cache_path.empty()) {
+            if (mod.load(this->params.cache_path)) {
+                SPC_INF("%s: ngram-mod cache loaded from '%s' (%zu entries)\n",
+                        this->params.cache_path.c_str(), mod.get_used());
+            } else {
+                SPC_INF("%s: ngram-mod cache '%s' not usable, starting empty\n",
+                        __func__, this->params.cache_path.c_str());
+            }
+        }
+    }
+
+    // the table is written back when it has grown enough to be worth the write, so a
+    // hard kill still leaves a usable cache behind
+    void maybe_save() {
+        if (this->params.cache_path.empty() || !cache_dirty) {
+            return;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now - cache_last_save < std::chrono::seconds(30)) {
+            return;
+        }
+
+        if (mod.save(this->params.cache_path)) {
+            cache_dirty = false;
+            cache_last_save = now;
+            SPC_INF("ngram-mod cache saved to '%s' (%zu entries)\n",
+                    __func__, this->params.cache_path.c_str(), mod.get_used());
+        }
+    }
+
+    ~common_speculative_impl_ngram_mod() override {
+        if (!this->params.cache_path.empty() && mod.get_used() > 0) {
+            mod.save(this->params.cache_path);
+        }
     }
 
     void begin(llama_seq_id seq_id, const llama_tokens & prompt) override {
@@ -3314,6 +3356,9 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
             }
 
             sinfo.i_last = cur_len - n;
+
+            cache_dirty = true;
+            maybe_save();
         }
 
         result.resize(n + params.n_max);

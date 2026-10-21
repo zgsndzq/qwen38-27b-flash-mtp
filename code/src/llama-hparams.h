@@ -49,6 +49,8 @@ struct llama_hparams {
     bool swin_norm;
     bool norm_before_residual = false;
     bool norm_before_fc       = false;
+    // eagle4 'norm_output': the next draft step's hidden is the normed sum, not the raw one
+    bool norm_output          = false;
 
     uint32_t n_ctx_train; // context size the model was trained on
     uint32_t n_embd;

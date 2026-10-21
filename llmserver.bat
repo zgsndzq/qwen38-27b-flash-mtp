@@ -12,6 +12,7 @@ rem  Your own build wins when both exist.
 rem
 rem  All of OUR switches live in features.ini, which the engine reads itself
 rem  through --features-file. Only upstream-known parameters are set here.
+rem  This file must stay ASCII + CRLF - cmd breaks on anything else.
 rem ===========================================================================
 
 set "SERVER="
@@ -67,14 +68,10 @@ rem Without mmproj the server refuses every image request, so mount what exists 
 set "VISION=0"
 set "MMPROJ=%~dp0weights\mmproj-Qwen3.8-27B-Q8_0.gguf"
 set "VISARG="
-if "%VISION%"=="1" if exist "%MMPROJ%" (
-  set "VISARG=--mmproj "%MMPROJ%" --image-min-tokens 1024"
-) else (
-  echo [warn] %MMPROJ% not found - starting without vision
-)
+if "%VISION%"=="1" if exist "%MMPROJ%" set "VISARG=--mmproj %MMPROJ% --image-min-tokens 1024"
 
-rem KV 槽位存盘目录：llmchat 用它保存/恢复整段 KV（重启后秒续同一段对话）。
-rem 每个槽位文件约 18 KB/token（16k 前缀 ≈ 290 MB），放 logs 下不进 git。
+rem KV slot store: llmchat saves and restores a whole conversation here.
+rem about 18 KB per token, kept under logs so it never enters git.
 if not exist "%~dp0data\slots" mkdir "%~dp0data\slots"
 
 "%SERVER%\llama-server.exe" -m "%~dp0weights\%MODEL%" ^

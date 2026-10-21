@@ -412,6 +412,9 @@ struct common_params_speculative_ngram_mod {
 
     int32_t n_max = 64;
     int32_t n_min = 48;
+
+    // file the ngram table is loaded from at start and written back to while running
+    std::string cache_path;
 };
 
 struct common_params_speculative_ngram_map {
