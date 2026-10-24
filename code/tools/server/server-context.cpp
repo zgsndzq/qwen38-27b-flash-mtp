@@ -726,8 +726,19 @@ struct server_slot {
             SLT_INF(*this,
                     "draft acceptance = %0.5f (%5d accepted / %5d generated), mean len = %5.2f\n",
                     draft_ratio, n_draft_accepted, n_draft_total, mean_acc_len);
-            SLT_TRC(*this,
-                    "     acc per pos = (%s)\n", acceptance_rates_per_pos.c_str());
+            // Per-position survival curve: entry i is the share of verify steps that
+            // got past depth i. The counter behind it is cumulative (every accepted
+            // token bumps all positions below it), so S(i) = P(len > i) and the
+            // marginal acceptance of depth i is S(i)/S(i-1).
+            //
+            // Kept at INFO on purpose: this shape is what tells a geometric candidate
+            // distribution (constant marginals) from a long-tailed one (marginals that
+            // collapse), and mean len alone cannot distinguish the two. The two
+            // assumptions differ by 2.8x in predicted speedup, so the shape is worth a
+            // line in the log.
+            SLT_INF(*this,
+                    "     acc per pos = (%s), steps = %d\n",
+                    acceptance_rates_per_pos.c_str(), n_draft_verif_steps);
         }
 
         common_speculative_print_stats(spec);
@@ -3527,10 +3538,37 @@ private:
                                     }
 
                                     if (do_reset) {
-                                        SLT_TRC(slot, "forcing full prompt re-processing due to lack of cache data (likely due to SWA or hybrid/recurrent memory, see %s)\n",
-                                                "https://github.com/ggml-org/llama.cpp/pull/13194#issuecomment-2868343055");
-                                        pos_next = 0;
-                                        n_past = 0;
+                                        // A slot restored from disk has NO checkpoints: nothing ever
+                                        // saved them. Upstream treats "no checkpoint" as "we cannot
+                                        // trust the memory" and re-processes the whole prompt, which
+                                        // made /slots restore useless - the KV was there (n_past ==
+                                        // prompt size, cells loaded) and got thrown away anyway.
+                                        //
+                                        // The checkpoint machinery exists to recover a sub-range when
+                                        // the head of the context was evicted (SWA / hybrid memory).
+                                        // If the prefix starts at 0 and the memory reaches pos_next - 1,
+                                        // the whole range is present and no checkpoint is needed.
+                                        const auto mem_pos_max = llama_memory_seq_pos_max(llama_get_memory(ctx_tgt), slot.id);
+                                        // NOTE: pos_min cannot be used as "the prefix starts at 0" here.
+                                        // This model has GDN layers, so the memory is hybrid and pos_min
+                                        // comes from the recurrent side, where a sequence is a single
+                                        // state at its last position - pos_min == pos_max == n_past-1.
+                                        // That made every restored slot look like a mid-context resume
+                                        // without a checkpoint, so it was reset and re-prefilled.
+                                        // What actually matters is whether the memory sits exactly at the
+                                        // end of the prompt, which is the case both for a fresh restore
+                                        // and for a normal cached turn.
+                                        const bool full_prefix_present = (mem_pos_max + 1 >= n_past);
+
+                                        if (full_prefix_present) {
+                                            SLT_INF(slot, "no checkpoint, but pos [0, %d) is in memory - keeping n_past = %d\n",
+                                                    (int) (mem_pos_max + 1), n_past);
+                                        } else {
+                                            SLT_TRC(slot, "forcing full prompt re-processing due to lack of cache data (likely due to SWA or hybrid/recurrent memory, see %s)\n",
+                                                    "https://github.com/ggml-org/llama.cpp/pull/13194#issuecomment-2868343055");
+                                            pos_next = 0;
+                                            n_past = 0;
+                                        }
                                     }
                                 }
                             }
