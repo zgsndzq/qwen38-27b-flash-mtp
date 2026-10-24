@@ -1,0 +1,62 @@
+{
+  "alpha": 0.44,
+  "decay": 0.94,
+  "model": "geometric",
+  "budget": 48,
+  "rounds": 1000000,
+  "seed": 20261024,
+  "t_step_ms": 21.28676470588235,
+  "base_ts": 46.97754749568221,
+  "baseline_chain_n": 5,
+  "baseline_gain": 1.726177,
+  "baseline_ts": 81.09156200345424,
+  "rows": [
+    {
+      "width": 1,
+      "depth": 48,
+      "gain": 1.732304,
+      "ts": 81.37939343696029,
+      "speedup_vs_chain": 1.0035494621930428
+    },
+    {
+      "width": 2,
+      "depth": 24,
+      "gain": 2.78349,
+      "ts": 130.76153367875648,
+      "speedup_vs_chain": 1.6125171404786414
+    },
+    {
+      "width": 3,
+      "depth": 16,
+      "gain": 4.132757,
+      "ts": 194.14678825561313,
+      "speedup_vs_chain": 2.3941675737771964
+    },
+    {
+      "width": 4,
+      "depth": 12,
+      "gain": 5.64075,
+      "ts": 264.9886010362694,
+      "speedup_vs_chain": 3.2677703387311956
+    },
+    {
+      "width": 6,
+      "depth": 8,
+      "gain": 7.179171,
+      "ts": 337.2598466321244,
+      "speedup_vs_chain": 4.159000496472841
+    },
+    {
+      "width": 8,
+      "depth": 6,
+      "gain": 6.616973,
+      "ts": 310.8491633851468,
+      "speedup_vs_chain": 3.833310836605979
+    }
+  ],
+  "best": {
+    "width": 6,
+    "depth": 8,
+    "ts": 337.2598466321244
+  }
+}

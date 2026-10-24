@@ -1,0 +1,46 @@
+{
+  "_comment": "树式投机解码的蒙特卡洛模拟参数。改这里，不要改代码。",
+  "hardware": {
+    "weight_gb": 5.79,
+    "bandwidth_gbps": 272,
+    "note": "PTQ1_0 27B 在 RTX 4060：5.79 GB / 272 GB/s = 21.3 ms 每步权重读取"
+  },
+  "draft": {
+    "alpha": 0.6,
+    "decay": 0.94,
+    "model": "empirical",
+    "_model_help": "geometric: 每层命中率 1-(1-p_k)^width，候选按几何衰减；zipf: 按 Zipf 分布算 top-W 累积概率（更保守，接近真实草稿分布）",
+    "zipf_s": 1.1,
+    "_alpha_help": "alpha = 单候选（top-1）首层命中率。27B 实测 mean len 2.6-2.7 对应约 0.6",
+    "per_depth": [
+      0.6,
+      0.35,
+      0.15,
+      0.05
+    ]
+  },
+  "tree": {
+    "widths": [
+      1,
+      2,
+      3,
+      4,
+      6,
+      8
+    ],
+    "budget": 48,
+    "_help": "width x depth = budget。width=1 就是普通链式"
+  },
+  "sim": {
+    "n_rounds": 1000000,
+    "seed": 20261024,
+    "chunk": 250000,
+    "_help": "n_rounds 用 1e6 快速验证，1e7 做最终结论。chunk 控制内存",
+    "budget_seconds": 60,
+    "_budget_help": "硬规矩：任何模拟都不许超过 60 s。sim_tree.py 会按 0.70 us/轮预估耗时，超预算直接拒绝并给出可负担的轮数（--force 可跳过）"
+  },
+  "baseline": {
+    "chain_n": 5,
+    "_help": "对比基准：现在生产的 DRAFT_N=4（4 草稿 + 1 验证）"
+  }
+}
