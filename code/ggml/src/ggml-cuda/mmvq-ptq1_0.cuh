@@ -308,6 +308,20 @@ static __host__ int ptq1_0_pt_rows_per_cta(const int blocks_per_row, const int n
 #define PTQ1_0_PT_MINB_5P 3
 #endif
 
+// 6..8 columns. Default 1 keeps the shipping schedule byte-identical: >5 columns used
+// to collapse to one row per item, which re-reads the weight stream once per output row
+// and is why the measured 8-column case lands at 13-25 t/s (features.ini).
+//
+// A standalone probe of the same weight stream (bench/tree_matvec) shows the hardware is
+// still at 50% of bandwidth at 8 columns -- 43 ms per step against 50 ms at 4 columns --
+// so the cliff is the schedule, not the memory system. Raising this to 2 or 4 recovers
+// the reuse, at the cost of registers: dots[ncols][ROWS] grows with both. Build with
+// -DPTQ1_0_PT_ROWS_68=2 and set GGML_CUDA_PTQ1_MMVQ_MAX=8 to route those columns onto
+// this path; with the default (1) nothing changes anywhere.
+#ifndef PTQ1_0_PT_ROWS_68
+#define PTQ1_0_PT_ROWS_68 1
+#endif
+
 // Same row-per-item rule the launcher instantiates. Multi-column paths retain
 // their existing 4/2-row schedule.
 static constexpr __host__ __device__ int ptq1_0_pt_rows_per_item(const int ncols_dst) {
@@ -315,7 +329,10 @@ static constexpr __host__ __device__ int ptq1_0_pt_rows_per_item(const int ncols
     // otherwise cost 40+ registers on top of the 5-column geometry, and MINB_5P caps ptxas at
     // 170 regs -- the overflow spills to local memory and costs ~10x. Two rows also doubles the
     // CTA count, which is what the weight stream needs to fill the memory pipeline.
-    return ncols_dst <= 2 ? 4 : (ncols_dst <= 4 ? PTQ1_0_PT_ROWS_34 : (ncols_dst <= 5 ? PTQ1_0_PT_ROWS_5P : 1));
+    return ncols_dst <= 2 ? 4
+         : (ncols_dst <= 4 ? PTQ1_0_PT_ROWS_34
+         : (ncols_dst <= 5 ? PTQ1_0_PT_ROWS_5P
+         : (ncols_dst <= 8 ? PTQ1_0_PT_ROWS_68 : 1)));
 }
 
 // The one-row tile is tuned on sm_86. Other devices keep the four-row baseline,

@@ -115,6 +115,18 @@ if (CUDAToolkit_FOUND)
     ggml_cuda_fattn_vec_instances(${CMAKE_CURRENT_SOURCE_DIR} SRCS)
     list(APPEND GGML_SOURCES_CUDA ${SRCS})
 
+    # nvcc child processes (cudafe++, cicc, ptxas) inherit the launching process's
+    # environment. When this build is driven from an IDE or agent harness that injects
+    # tens of KB of variables, those children fail to start and nvcc exits 1 with NO
+    # output at all -- every CUDA object shows up as a bare "FAILED" and the log has no
+    # "error:" line anywhere. --use-local-env makes nvcc read a clean local environment
+    # instead. It is a no-op in a normal shell, so it is unconditional on purpose.
+    #
+    # Verified 2026-10-24: a fattn-mma q3_0 instance that fails through `ninja` compiles
+    # clean (exit 0) when the same command line carries this flag. Do not remove it, and
+    # do not hand-patch CMakeFiles/rules.ninja -- a reconfigure overwrites that.
+    add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:--use-local-env>")
+
     ggml_add_backend_library(ggml-cuda
                              ${GGML_HEADERS_CUDA}
                              ${GGML_SOURCES_CUDA}
