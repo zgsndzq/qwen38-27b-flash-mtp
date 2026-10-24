@@ -23,14 +23,12 @@
 配置：`llmserver.bat` 的 `NGMIN/NGMAX/NMATCH/LOOKUP_N` + `--spec-type ngram-mod`。
 BENCH=1 时切掉它以测裸速。
 
-### 1.2 ngram 表落盘 — 重启不冷
+### 1.2 ngram 表落盘 — **已禁用**（原实测有效，但 save/load 不对称）
 
-`spec-ngram-mod-cache = data/ngram-mod.cache`（`[qwen]`）。
-表是 16 MB 固定 hash，写回时机=表变脏且距上次写盘 ≥30 秒，硬杀也留得住。
-实测重启后第一轮 **47.5 → 182.8 t/s**。
-
-注意：**每个模型一个文件**，词表不同不能共用（27B 与 9B 词表相同可共用短名单，
-但 ngram 表按 vocab 索引，仍建议分开）。
+原做法 `spec-ngram-mod-cache = data/ngram-mod.cache`，原实测重启后第一轮 **47.5 → 182.8 t/s**。
+2026-10-22 关闭：`save()` 写出的文件 `load()` 读不了，**新生成的缓存同样让服务在 ngram 表
+初始化后访问违例（0xC0000005）**。不是文件坏了，是写读格式不对称。
+代价：重启后表从头建，冷态 35 t/s，几轮回 ~180。**修好 `load()` 之前别打开。**
 
 ### 1.3 MTP 草稿头（模型自带 nextn 层）
 
@@ -66,9 +64,34 @@ CTX 131072 时 host tail 约 1.18 GB RAM（18 KB/token）。
 
 ### 2.3 生产上下文配置
 
-`llmserver.bat`：`CTX=131072`、`--parallel 1`、`-fa on`、
-`-ctk q4_0 -ctv q4_0`、`-b 4096`、`-t 8`、`-ngl 99`、`VISION=0`（无 mmproj）。
-9B 用 128K + q4_0 KV 全显存（2.49 GB 权重，KV 只 0.7 GB，`kv-vram-cells=0`）。
+`llmserver.bat` 一个文件管全部数字（`features.ini` 只放开关）：
+
+```bat
+set "CTX=131072"
+set "CTK=q4_0"      rem 改成 q3_0 即切到 88K
+set "CTV=q4_0"
+set "CELLS=90112"
+if "%CTK%%CTV%"=="q4_0q4_0" set "CELLS=65536"
+if "%CTK%%CTV%"=="q3_0q3_0" set "CELLS=90112"
+set "GGML_CUDA_FA_CHUNK=%CELLS%"
+```
+
+外加 `--parallel 1`、`-fa on`、`-b 4096`、`-t 8`、`-ngl 99`、`VISION=0`。
+cells 与 `FA_CHUNK` 必须同值（chunk pool 由后者定尺，不等就白买），现在由 `CTK/CTV` 推导，
+改不歪。9B 用 128K + q4_0 全显存（2.49 GB 权重，KV 只 0.7 GB）。
+
+### 2.4 q3_0 — 驻显存上下文 64K → 88K
+
+32 个权重一块：2 B f16 scale + 12 B 顺序 3-bit 位流 = 14 B，q4_0 是 18 B，小 22%。
+只是缓存类型，`-ctk q3_0` 切换，量化在写入那一刻在线做，不改模型。
+
+| | 每 cell | cells | KV | 显存里的上下文 |
+|---|---|---|---|---|
+| q4_0 | 18 KB | 65,536 | 1152 MiB | 64K |
+| q3_0 | 14 KB | 90,112 | 1232 MiB | **88K** |
+
+比 q4_0 少两个坑：零点折进权重所以不需要 Σq 修正，块内不交错所以解包是顺序的。
+编译通过（31 个实例，`ggml-cuda.dll` +45 MB），**启动与精度尚未实测**。
 
 ---
 
@@ -159,7 +182,31 @@ mat-vec 155 t/s vs MMQ 244；n=5 时 172 vs 162。**5 是拐点，别动**
 
 ---
 
-## 5. 跨模型通用结论（正面）
+## 5. 上下文续接 — 重启不重算
+
+不是生成快，是**开新会话不用重嚼一遍上下文**：13K 的 prefill 是 36 秒，复用就是 0.3 秒。
+
+**槽位续接（2026-10-24，最重要的一个）**。`pos_min` 对 hybrid 记忆恒等于 `thold`，
+checkpoint 保护因此永远判 `do_reset`，把刚读回来的 KV 主动清零。判据改成
+"记忆是否覆盖到 `n_past`"之后：restore 后第一次 `cached=3070/3071`、`prompt_n=1`，
+**prefill 6.5 s → 1 token**；续聊同样受益（之前每加一句都全量重算）。
+
+**帧三件套（system / think / effort）**。缓存只能复用到"prompt 与产出它时逐 token 相同"，
+有三处会让前缀分叉：槽位存盘那次 `session_save()` 把帧覆盖成 null；历史存的是用户原话
+而不是实际发出的 `user + <knowledge>`；`enable_thinking` 没进帧（模板只在它为真时才注入
+system 块）。现在帧是**比较**不是**覆盖**：一致才读槽位，不一致就作废并按本次配置跑。
+注意 `effort=medium` 在模板里没有分支 → 整个 system 块消失，所以三档之间切换必然换前缀。
+
+**思考块必须留在历史**。模板按 `reasoning_content` 渲染 `<think>…</think>`，而 KV 里本来
+就有这些 token；客户端丢掉它 = prompt 比 KV 少一段 = 断在第一个带思考的 assistant 轮。
+`keep_thinking` 默认改为 true。
+
+**`acc per pos` 上 INFO**。累积存活函数，`S(i)/S(i-1)` 才是第 i 层边际。实测第 3 层掉到 0
+（长尾形状），这就是"加宽链式只 +0.4%"的实测依据——`mock/` 里那个结论不是拍的。
+
+---
+
+## 6. 跨模型通用结论（正面）
 
 1. **ngram 是乘数**：吞吐 = 基准 × ngram 倍数。优化只能作用在基准上。
 2. **草稿量化类型不必与 target 一致**：草稿 f16/q8_0、target PTQ1_0 没问题，
