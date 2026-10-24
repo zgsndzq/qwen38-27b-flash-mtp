@@ -22,7 +22,7 @@ python chat.py --temp 0.6 --think on --effort medium
 |---|---|
 | `chat.py` | 客户端本体（stdlib only，`prompt_toolkit` 可选）。改行为改这里 |
 | `llmchat.bat` | 启动器：填参数 → 调 chat.py。**注释必须纯 ASCII**（原因见文件里那段说明） |
-| `sys.txt` | system prompt（UTF-8）。**改这里就能换人设**；删掉则用 chat.py 内置默认 |
+| `sys.txt` | system prompt（UTF-8）。**改这里就能换人设**；没有这个文件、也没配 `SYS_FILE`，就**一条 system 消息都不发**（没有内置兜底） |
 
 ## 参数（命令行 / bat 变量对照）
 
@@ -49,7 +49,34 @@ python chat.py --temp 0.6 --think on --effort medium
 | `clear` / `cls` / `清空` | 清空上下文（保留 system prompt） |
 | `/paste` … 单独一行 `/end` | 非 TTY（管道）下粘贴多行文本 |
 
-## 关于超时（重要）
+## 缓存/槽位的硬规则：前缀必须逐 token 可复现
+
+服务端用 `--slot-save-path` 起的槽位只支持**严格延长**：新请求的 prompt 必须是已存
+token 序列的延长，差一个 token 就丢掉整段 KV 全量重算（20K 上下文约 2 分钟）。
+
+前缀由三样东西决定，缺一不可，必须一起存、一起重放：
+
+| 成员 | 作用 | 存在哪 |
+|---|---|---|
+| system 正文 | 有就放在最前，没有就一条都不发 | 会话文件 `sys_frame` |
+| 思考开关 | 模板只有 `enable_thinking` 为真才解析 effort 并注入那段 system | `think_frame` |
+| 思考档位 | 同上，字面量进 system 段 | `effort_frame` |
+
+规则：
+1. **配什么就用什么**。没有 `--sys` / `--sys-file` / `SYS_FILE` 就不发 system 消息，
+   不做任何"内置默认"发挥。
+2. **历史里存实际发出的那一版**（含 `<knowledge>`、含图片），事后不改写。
+3. 槽位存盘之后那一次 `session_save()` 也**必须**把三帧一起写回；只写 `slot_tokens`
+   会把帧覆盖成 null，下次启动就用空帧重放，前缀在 system 段（约第 20 个 token）分叉。
+4. **帧变了就是槽位作废，不是把旧帧套回当前配置**。启动时拿当前帧和存档帧比：
+   一致才读槽位；不一致就清掉槽位、按**这一次**的配置跑，并明确打印差异
+   （`思考开关 关 -> 开`）。上一版强行沿用旧帧，表现是"打开思考却没思考"。
+5. **思考块必须回填进历史**（默认 `keep_thinking=True`）。模板看到 assistant 带
+   `reasoning_content` 就渲染 `<think>…</think>`，而服务端 KV 里本来就有这些 token；
+   客户端丢掉它，prompt 就比 KV 少一段，公共前缀在**第一个带思考的 assistant 轮**断掉，
+   后面全部重算。想省上下文用 `--no-keep-thinking`，那是拿缓存换空间。
+
+
 
 超时保护的是**心跳**，不是"整体耗时"：预填充（prompt eval）期间服务端**一个字都不发**，
 长上下文下 pp 再快也要几十秒到几分钟。所以长提示词报 timeout **不是服务挂了**，

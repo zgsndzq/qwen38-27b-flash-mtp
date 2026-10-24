@@ -39,7 +39,9 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_URL = os.environ.get("LLAMA_CHAT_URL", "http://127.0.0.1:18080")
-DEFAULT_SYS = "你是一个有用的中文 AI 助手，请准确、完整地回答用户的问题。"
+# 没有内置 system。配置了（--sys / --sys-file / sys.txt）就发，没配就一条 system
+# 消息都不发。内置兜底会让"同一份配置在不同启动之间渲染出不同前缀"，既不符合
+# "配什么就用什么"，也会让槽位/提示缓存从 system 段开始整体作废。
 
 
 def fill_sys(text):
@@ -308,7 +310,7 @@ def _build_parser():
                "  python chat.py --base-url http://127.0.0.1:18081 --think server\n")
     ap.add_argument("--base-url", default=DEFAULT_URL,
                     help=f"llama-server 地址（默认 {DEFAULT_URL}）")
-    ap.add_argument("--sys", default=None, help="system prompt（默认内置中文提示词）")
+    ap.add_argument("--sys", default=None, help="system prompt（不给则不下发 system 消息）")
     ap.add_argument("--sys-file", default=None,
                     help="从 UTF-8 文本文件读 system prompt（优先于 --sys）")
     ap.add_argument("--no-sys", action="store_true",
@@ -326,9 +328,12 @@ def _build_parser():
                     help="单轮回答上限；不给 = 不限制（答到 EOS）")
     ap.add_argument("--hide-thinking", action="store_true",
                     help="不打印思考内容（仅影响显示，请求照常开启思考）")
-    ap.add_argument("--keep-thinking", action="store_true",
-                    help="把思考块留在历史里（默认不留：它每轮都占满一个思考预算的上下文，"
-                         "长会话轮数会被砍到五分之一左右）")
+    ap.add_argument("--no-keep-thinking", dest="keep_thinking", action="store_false",
+                    help="不把思考块留在历史里（默认留）。不留的话下一轮 prompt 会比服务端 KV "
+                         "少一段思考，公共前缀在第一个带思考的 assistant 轮断掉，整段重算")
+    ap.add_argument("--keep-thinking", dest="keep_thinking", action="store_true",
+                    help="兼容旧写法，等于默认行为")
+    ap.set_defaults(keep_thinking=True)
     ap.add_argument("--no-tui", action="store_true", help="禁用多行 TUI，用单行 + /paste")
     ap.add_argument("--mem", choices=["auto", "on", "off"], default="auto",
                     help="记忆注入：auto=关键词命中才注入（默认）· "
@@ -421,11 +426,23 @@ def slot_action(base_url, action, filename=None, timeout=180, slot_id=0):
         return None
 
 
-def session_save(messages, tokens, slot_tokens=None):
-    """会话落盘。slot_tokens = 上次成功存槽位时的 token 数，用来决定下次要不要重存。"""
+def session_save(messages, tokens, slot_tokens=None, sys_frame=None, effort_frame=None,
+                 think_frame=None):
+    """会话落盘。slot_tokens = 上次成功存槽位时的 token 数，用来决定下次要不要重存。
+
+    *****  三个 frame 必须与槽位里的 KV 严格对应  *****
+    sys_frame / effort_frame / think_frame 是"渲染帧"：它们决定 chat 模板吐出的
+    前缀 token 序列。槽位只支持"新请求是已存 token 的延长"，恢复后的 prompt 只要
+    和存档差一个 token，服务端就丢掉整段 KV 全量重算（20K 上下文约 2 分钟）。
+
+    所以任何一次 session_save 都必须把当前帧完整写进去 —— 少写一个字段，
+    下次启动就会用默认帧去重放，前缀立刻在 system 段（约第 20 个 token）分叉。
+    """
     try:
         SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        data = {"messages": messages, "tokens": int(tokens), "slot": SLOT_NAME}
+        data = {"messages": messages, "tokens": int(tokens), "slot": SLOT_NAME,
+                "sys_frame": sys_frame, "effort_frame": effort_frame,
+                "think_frame": think_frame}
         if slot_tokens is not None:
             data["slot_tokens"] = int(slot_tokens)
         else:
@@ -482,13 +499,9 @@ except ValueError:          # env 被写坏（空串/非数字）时退回默认
 # Vision memory = every image under mem\, recursively. No copies anywhere else.
 IMG_SUFFIX = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 
-# Keep images in history: the message that was sent stays in the context verbatim,
-# so the model can still see the picture on later turns ("change the colour").
-# Do NOT replace old images with placeholder text: rewriting an already-sent message
-# invalidates the whole prompt cache and re-prefills everything each turn (measured
-# apparent throughput falls to ~5 t/s). The price of keeping them is that images
-# accumulate - watch the [ctx] watermark.
-VISION_KEEP = True
+# 历史里永远存**实际发出去的那一版**（含图片、含 <knowledge>），事后一个字都不改：
+# 改写已发送的消息 = 前缀变了 = 提示缓存和槽位一起作废，每轮全量重算
+# （实测表观吞吐掉到 ~5 t/s）。代价是图片会累积，看 [ctx] 水位。
 
 
 def _data_url(path):
@@ -560,9 +573,7 @@ def main(argv=None):
     a = _build_parser().parse_args(argv)
 
     if a.no_sys:
-        # Pure model call: build no system message and read no sys file.
-        # None means "no system" - an empty string would fall back to DEFAULT_SYS
-        # through `a.sys or DEFAULT_SYS`.
+        # 显式不发 system，也不读 sys 文件。
         sys_prompt = None
     elif a.sys_file:
         try:
@@ -577,10 +588,15 @@ def main(argv=None):
             print(f"[ERROR] --sys-file 内容为空：{a.sys_file}")
             return 2
     else:
-        sys_prompt = a.sys or DEFAULT_SYS
+        # no default: a system prompt is opt-in via --sys / --sys-file. The old
+        # "你是一个有用的中文 AI 助手" fallback silently changed the prompt prefix
+        # between runs and broke slot-restore prompt caching.
+        sys_prompt = a.sys
 
     if sys_prompt is not None:
         sys_prompt = fill_sys(sys_prompt)  # {date} / {weekday}
+    sys_frame = sys_prompt
+    effort_frame = a.effort
 
     think_flag = _parse_think(a.think)
     timeout = a.timeout or DEFAULT_TIMEOUT
@@ -618,6 +634,36 @@ def main(argv=None):
         messages = saved["messages"]
         mem_done = True
         need_restore = True
+
+        # 帧只用来判断"旧槽位还能不能用"，不是用来覆盖用户这一次的选择。
+        # 上一版把存档帧强行套回当前配置，结果改成 --think on 启动还是按 off 跑，
+        # 看起来就是"打开了思考但没思考"。正确做法：帧变了 ⇒ 槽位作废、按新的跑。
+        frame_diff = []
+        if "sys_frame" in saved and saved.get("sys_frame") != sys_prompt:
+            frame_diff.append("system")
+        if "think_frame" in saved and saved.get("think_frame") != think_flag:
+            frame_diff.append("思考开关 %s -> %s" % (
+                "开" if saved.get("think_frame") else "关",
+                "服务端默认" if think_flag is None else ("开" if think_flag else "关")))
+        if "effort_frame" in saved and saved.get("effort_frame") != a.effort:
+            frame_diff.append("思考档位 %s -> %s" % (saved.get("effort_frame"), a.effort))
+
+        if frame_diff:
+            # 前缀从第一个 token 起就不一样了，槽位里那 13K 一个都用不上。
+            need_restore = False
+            slot_action(base_url, "erase")      # 顺手清掉，免得下次又读一遍 348 MB
+            print("（存档帧与本次不同：%s）" % "；".join(frame_diff))
+            print("  槽位作废，这一轮全量重算；之后的轮次正常走缓存。")
+        # 历史里的 system 消息要跟本次帧一致（帧没变时这一步是空操作）
+        if messages and messages[0]["role"] == "system":
+            messages = _seed_messages(sys_prompt) + messages[1:]
+        elif sys_prompt is not None:
+            messages = _seed_messages(sys_prompt) + messages
+        _frame = "无 system" if sys_prompt is None else "system %d 字" % len(sys_prompt)
+        print("（本次帧：%s，思考=%s，档位=%s）" % (
+            _frame,
+            "服务端默认" if think_flag is None else ("开" if think_flag else "关"),
+            a.effort or "模板默认"))
         print(f"已恢复上次会话：{len(messages)} 条消息、约 {saved.get('tokens') or 0} tok"
               f"（输入 clear 重新开始）\n")
 
@@ -706,14 +752,27 @@ def main(argv=None):
 
         # 上次的槽位只在恢复后的第一轮读一次；服务端会取最长公共前缀，改过历史
         # 就自动退化成重算，不会读进错误的 KV。
+        restored_n = 0
         if need_restore:
             need_restore = False
             # 文件不在就别发请求了：服务端会回 400「No available space in KV cache」，
             # 那条日志很容易被误读成 KV 满了。
+            #
+            # 现状（2026-10-24 在跑着的服务上实测）：restore 本身是无损的——
+            #   文件 213,573,160 bytes，n_read 与文件大小逐字节相同；
+            #   restore 后再 save，两个文件 52,141 个 4KB 块**全部相同**；
+            #   槽位里存的前 40 个 token 与当场 /apply-template + /tokenize 的结果完全一致；
+            #   /slots 报告 n_prompt_tokens = 3071，等 7 秒也不会被清掉。
+            # **但恢复后的第一次请求 cached=0、prompt_n=3071（全量重算）；
+            #   紧接着第二次同样的请求 cached=3067、prompt_n=4。**
+            # 也就是说 KV 读回来了、token 也对，可第一次请求就是不拿它复用，
+            # 只在它重建完之后才开始命中。断点在请求路径，不在客户端、不在文件格式。
+            # 保留调用：它是"重启续接"这个功能的唯一入口，也是复现问题的抓手。
             if (saved.get("tokens") or 0) >= SLOT_MIN and SLOT_FILE.exists():
                 r = slot_action(base_url, "restore", SLOT_NAME)
                 if r and r.get("n_restored"):
-                    print(f"  [槽位] 读回 {r['n_restored']} tok，本轮只算新增部分")
+                    restored_n = int(r["n_restored"])
+                    print(f"  [槽位] 读回 {restored_n} tok")
         try:
             printer = stream_printer(hide_thinking=a.hide_thinking)
             reasoning, content, timings = chat_sse(
@@ -725,6 +784,15 @@ def main(argv=None):
                 return 1
             continue
 
+        # 槽位"读回成功"不等于"这一轮复用了"。服务端只接受新 prompt 是已存 token 的
+        # 严格延长，帧（system / 思考开关 / 档位）差一个 token 就整段重算。
+        # prompt_n 是这一轮实际参与前向的 token 数，它才是唯一可信的证据。
+        if restored_n:
+            pp_n = int(timings.get("prompt_n") or 0)
+            if pp_n > max(256, restored_n // 8):
+                print(f"  [槽位] 没命中：读回 {restored_n} tok，但重算了 {pp_n} tok"
+                      f"（存档帧与当前帧不一致，输入 clear 重建）")
+
         if printer.streamed["content"] or printer.streamed["thinking"]:
             print()                          # 流式已逐字印出，只补换行
         else:
@@ -735,16 +803,16 @@ def main(argv=None):
         # see them. What goes into history is always the version that was actually
         # sent, and it is never rewritten afterwards - rewriting a sent message
         # destroys the prompt cache and re-prefills every turn (~5 t/s measured).
-        if VISION_KEEP and isinstance(sent, list):
-            messages.append({"role": "user", "content": sent})
-        else:
-            messages.append({"role": "user", "content": user})
-        # The thinking block does NOT go into history by default: it costs its full
-        # length every turn (budget 4096 -> 4096 tokens/turn), while the next turn
-        # only really needs the answer. Dropping it means the context grows by
-        # input+answer per turn, which multiplies how many turns fit in a session;
-        # the prefix is fixed from turn 1 so the prompt cache still hits.
-        # It is still streamed to the screen; --keep-thinking restores the old way.
+        # 历史里必须放**真正发出去的那一版**。以前文本记忆那一支写的是 user 原话，
+        # 而实际发出的是 user + <knowledge>——第二轮的公共前缀就在那一小段上分叉，
+        # 提示缓存和槽位一起失效，白算整段 prompt。
+        messages.append({"role": "user", "content": sent})
+        # 思考块必须回填进历史。模型的模板（tokenizer.chat_template 111-117 行）只要看到
+        # assistant 消息带 reasoning_content，就会渲染 <think>…</think>；服务端的 KV 里本来
+        # 就存着这些 token。客户端把它丢掉，下一轮的 prompt 就比 KV 少一段，公共前缀在
+        # **第一个有过思考的 assistant 轮**断掉，后面全部重算——13K 上下文就是 36 秒。
+        # 以前默认丢掉是为了省上下文，那是拿"每轮全量重算"换"少占几千 token"，不划算。
+        # 想省上下文用 --no-keep-thinking，但那是拿缓存换空间。
         assistant = {"role": "assistant", "content": content}
         if reasoning and a.keep_thinking:
             assistant["reasoning_content"] = reasoning
@@ -764,7 +832,8 @@ def main(argv=None):
             # 会话落盘 + 长前缀存槽位：下次启动（或换个会话再回来）直接读回，
             # 不用重算整段 prompt。短于 SLOT_MIN 的不存；上下文没长出 SLOT_GROW
             # 也不重存——一个槽位文件 28 KB/token，16k 就 440 MB。
-            session_save(messages, ctx)
+            session_save(messages, ctx, sys_frame=sys_frame, effort_frame=a.effort,
+                         think_frame=think_flag)
             prev = int(saved.get("slot_tokens") or 0) if isinstance(saved, dict) else 0
             if ctx >= SLOT_MIN and (not SLOT_FILE.exists() or ctx - prev >= SLOT_GROW):
                 r = slot_action(base_url, "save", SLOT_NAME)
@@ -772,7 +841,11 @@ def main(argv=None):
                     if not isinstance(saved, dict):
                         saved = {}
                     saved["slot_tokens"] = ctx
-                    session_save(messages, ctx, slot_tokens=ctx)
+                    # 三个 frame 必须一起写：这里原来只传 slot_tokens，帧被覆盖成
+                    # None，下次启动就用"无 system / 无档位"去重放，前缀在 system
+                    # 段分叉，槽位等于白存。
+                    session_save(messages, ctx, slot_tokens=ctx, sys_frame=sys_frame,
+                                 effort_frame=a.effort, think_frame=think_flag)
                     print(f"  [槽位] 已存 {r['n_saved']} tok"
                           f"（{r.get('n_written', 0) / 1e6:.0f} MB，"
                           f"{r.get('timings', {}).get('save_ms', 0):.0f} ms）")
