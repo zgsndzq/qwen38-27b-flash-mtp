@@ -3269,11 +3269,11 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
 
         if (!this->params.cache_path.empty()) {
             if (mod.load(this->params.cache_path)) {
-                SPC_INF("%s: ngram-mod cache loaded from '%s' (%zu entries)\n",
+                SPC_INF("ngram-mod cache loaded from '%s' (%zu entries)\n",
                         this->params.cache_path.c_str(), mod.get_used());
             } else {
-                SPC_INF("%s: ngram-mod cache '%s' not usable, starting empty\n",
-                        __func__, this->params.cache_path.c_str());
+                SPC_INF("ngram-mod cache '%s' not usable, starting empty\n",
+                        this->params.cache_path.c_str());
             }
         }
     }
@@ -3294,7 +3294,7 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
             cache_dirty = false;
             cache_last_save = now;
             SPC_INF("ngram-mod cache saved to '%s' (%zu entries)\n",
-                    __func__, this->params.cache_path.c_str(), mod.get_used());
+                    this->params.cache_path.c_str(), mod.get_used());
         }
     }
 

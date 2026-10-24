@@ -5,13 +5,13 @@ rem this launcher only talks to an already running llama-server (start the packa
 rem PY: full path if 'python' is not on PATH
 set "PY=python"
 rem THINK: on / off / server -- server = keep the server's -rea
-set "THINK=off"
+set "THINK=on"
 rem EFFORT: xhigh / medium / low -- leave EMPTY to send nothing and let the chat
 rem template use its own default. medium = the model mid-depth reasoning mode; with
 rem the server budget no longer capped it gets to finish, which is what the old 2048
 rem cap was cutting off. xhigh reasons deeper, but on a ternary-quantised model a
 rem longer chain also has more room to drift, so medium is the chosen mode.
-set "EFFORT=medium"
+set "EFFORT=low"
 set "EFFARG="
 if not "%EFFORT%"=="" set "EFFARG=--effort %EFFORT%"
 rem MEM: memory switch -- 0 = none / 1 = text (mem\*.md) / 2 = vision image / 3 = mixed (text+image)

@@ -12,8 +12,8 @@
 logs/
 *.log
 
-# EAGLE-4 草稿的原始权重与 target 描述（只在转换时用，不进 Git）
-weights/eagle4*/
+# weights
+weights/
 
 # 生成物与临时文件
 /tmp/
@@ -24,5 +24,3 @@ __pycache__/
 # runtime data (sessions, KV dumps, perf csv)
 data/
 llmchat/data/
-# Sage-A1.5 Q4_K_M GGUF, 20.2 GB (background download, never in Git)
-weights/sage-a15/

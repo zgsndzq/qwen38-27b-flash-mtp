@@ -37,11 +37,32 @@ set "PATH=%SERVER%;%~dp0build\bin;%PATH%"
 
 set "MODEL=Qwen3.8-27B-Flash-MTP.gguf"
 set "CTX=131072"
-rem KV precision. cells kept in VRAM = features.ini kv-vram-cells (must be <= CTX).
+rem KV precision + VRAM cell budget, all configured HERE (single source).
+rem features.ini no longer carries the numbers: --kv-vram-cells and GGML_CUDA_FA_CHUNK
+rem below are derived from CTK/CTV, so the pair can never desync.
+rem   q4_0/q4_0  18 KB/cell  -> 65536 cells  (1152 MiB)  best accuracy
+rem   q4_0/q3_0  NOT USABLE: mixed types have no compiled FA kernel pair,
+rem   every op falls back to a full f16 copy (10x slower). Same type only.
+rem   q3_0/q3_0  14 KB/cell  -> 90112 cells  (1232 MiB)  set CTK/CTV to q3_0 for 90K
+rem Per cell = 4 KV heads x 256 wide x K+V x 16 attn layers. Cells past the
+rem tier live in pinned host RAM (CUDA VMM); CTX stays 131072 either way.
+rem Sizes leave ~400 MiB headroom: filling the card triggers VMM page
+rem migration on the weights and decode drops ~10x (measured, see task.md T16 #16).
 set "CTK=q4_0"
 set "CTV=q4_0"
+rem tier size lookup for the (K,V) pair above
+set "CELLS=90112"
+if "%CTK%%CTV%"=="q4_0q4_0" set "CELLS=65536"
+if "%CTK%%CTV%"=="q3_0q3_0" set "CELLS=90112"
+set "GGML_CUDA_FA_CHUNK=%CELLS%"
 rem thinking block token cap. -1 = unlimited, 0 = end at once, N>0 = hard cap.
-set "REBUDGET=-1"
+rem This is the ONLY knob that actually bounds thinking length. reasoning_effort is just
+rem a sentence the chat template writes into the system block - the model may ignore it.
+rem Standard for this model, see docs/ONE-MODEL-TWO-APIS.md: 2048 plus a message.
+set "REBUDGET=2048"
+rem The message is tokenized verbatim and forced just before the end-of-thinking tag,
+rem so it must be plain text - no \n escapes, nothing is unescaped anywhere.
+set "REBMSG= Budget exceeded, answer directly."
 rem draft width ceiling, the adaptive controller stays at or below it.
 set "DRAFT_N=4"
 rem ngram lookup drafter. NMATCH = preceding tokens that must match before it looks,
@@ -77,8 +98,8 @@ if not exist "%~dp0data\slots" mkdir "%~dp0data\slots"
 "%SERVER%\llama-server.exe" -m "%~dp0weights\%MODEL%" ^
   --host 127.0.0.1 --port 18080 --parallel 1 -rea off --no-ui ^
   --slot-save-path "%~dp0data\slots" ^
-  -c %CTX% -b 4096 -t 8 -ngl 99 -fa on -ctk %CTK% -ctv %CTV% ^
-  --reasoning-budget %REBUDGET% ^
+  -c %CTX% -b 4096 -t 8 -ngl 99 -fa on -ctk %CTK% -ctv %CTV% --kv-vram-cells %CELLS% ^
+  --reasoning-budget %REBUDGET% --reasoning-budget-message "%REBMSG%" ^
   --spec-type %SPECTYPE% --spec-draft-n-max %DRAFT_N% ^
   --spec-lookup-n-max %LOOKUP_N% --spec-ngram-mod-n-min %NGMIN% ^
   --spec-ngram-mod-n-max %NGMAX% ^
