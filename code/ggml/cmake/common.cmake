@@ -51,7 +51,10 @@ endfunction()
 
 # Determines which FlashAttention vector kernel template instances to compile, returns them in OUT_SRCS.
 function(ggml_cuda_fattn_vec_instances DIR OUT_SRCS)
-    set(FA_TYPES q4_0 q4_1 q5_0 q5_1 q8_0 bf16 f16)
+    # q3_0 is our own 3-bit K/V cache type (see ggml.h). It is only ever a
+    # cache type, never a weight type, so it only appears in the K/V
+    # combinations here.
+    set(FA_TYPES q3_0 q4_0 q4_1 q5_0 q5_1 q8_0 bf16 f16)
 
     string(TOLOWER "${GGML_CUDA_FA_QUANTS}" FA_QUANTS)
     string(STRIP   "${FA_QUANTS}" FA_QUANTS)

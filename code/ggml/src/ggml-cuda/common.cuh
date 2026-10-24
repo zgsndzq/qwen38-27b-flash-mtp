@@ -1117,6 +1117,30 @@ struct ggml_cuda_type_traits<GGML_TYPE_Q4_1> {
     static constexpr int qi = QI4_1;
 };
 
+// q3_0: 12 payload bytes per 32 weights, so there is no 4-byte-aligned int
+// view of a block pair (3 blocks = 36 B is the first multiple of 4). qr/qi are
+// only consumed by the MMQ weight paths, which a K/V cache never enters.
+// q3_0: weight j owns bits [3j, 3j+3) of the 12-byte payload, stored as
+// (w + 4) so the decoded weight is in [-4, 3] times d. Lives here because the
+// FA kernels, the cpy codecs and the convert kernels all need it.
+static __device__ __forceinline__ int q3_0_unpack3(const uint8_t * __restrict__ qs, const int j) {
+    const int bit = 3*j;
+    const int by  = bit >> 3;
+    const int sh  = bit & 7;
+    uint32_t u = (uint32_t) qs[by] >> sh;
+    if (sh > 5) {
+        u |= (uint32_t) qs[by + 1] << (8 - sh);
+    }
+    return (int) (u & 7) - 4;
+}
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_Q3_0> {
+    static constexpr int qk = QK3_0;
+    static constexpr int qr = QR3_0;
+    static constexpr int qi = QI3_0;
+};
+
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_Q5_0> {
     static constexpr int qk = QK5_0;

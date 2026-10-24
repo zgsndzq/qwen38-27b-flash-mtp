@@ -382,6 +382,41 @@ void ggml_vec_dot_q4_0_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, c
     *s = sumf;
 }
 
+void ggml_vec_dot_q3_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
+    const int qk = QK8_0;
+    const int nb = n / qk;
+
+    assert(n % qk == 0);
+    assert(nrc == 1);
+    UNUSED(nrc);
+    UNUSED(bx);
+    UNUSED(by);
+    UNUSED(bs);
+
+    const block_q3_0 * GGML_RESTRICT x = vx;
+    const block_q8_0 * GGML_RESTRICT y = vy;
+
+    // q3_0 is a sequential 3-bit stream (weight j owns bits [3j, 3j+3), value (u-4)),
+    // so there is no nibble split: just walk the 32 weights of each block in order.
+    float sumf = 0;
+    for (int ib = 0; ib < nb; ++ib) {
+        int sumi = 0;
+        for (int j = 0; j < qk; ++j) {
+            const int bit = 3*j;
+            const int byi = bit >> 3;
+            const int sh  = bit & 7;
+            unsigned int u = ((unsigned int) x[ib].qs[byi]) >> sh;
+            if (sh > 5) {
+                u |= ((unsigned int) x[ib].qs[byi + 1]) << (8 - sh);
+            }
+            sumi += ((int) (u & 7) - 4) * y[ib].qs[j];
+        }
+        sumf += sumi*GGML_CPU_FP16_TO_FP32(x[ib].d)*GGML_CPU_FP16_TO_FP32(y[ib].d);
+    }
+
+    *s = sumf;
+}
+
 // TODO: add WASM SIMD
 void ggml_vec_dot_q4_1_q8_1_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
     const int qk = QK8_1;

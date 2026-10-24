@@ -10248,10 +10248,17 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     for (int kv : { 1024, 2048, }) {
         for (int hs : { 64, 128, 256, }) {
             for (int nb : { 32, 64, }) {
-                for (ggml_type type_KV : { GGML_TYPE_F16, GGML_TYPE_Q8_0, GGML_TYPE_Q4_0, }) {
+                for (ggml_type type_KV : { GGML_TYPE_F16, GGML_TYPE_Q8_0, GGML_TYPE_Q4_0, GGML_TYPE_Q3_0, }) {
                     test_cases.emplace_back(new test_flash_attn_ext(hs, hs, 8, {4, 1}, kv, nb, true, false, 0, 0, GGML_PREC_F32, type_KV, type_KV));
                 }
             }
+        }
+    }
+
+    // q3_0 decode/verify-shaped cases (small nb, gqa via nr23)
+    for (int nb : { 1, 2, 4, 8, }) {
+        for (int kv : { 512, 4096, }) {
+            test_cases.emplace_back(new test_flash_attn_ext(256, 256, 24, {6, 1}, kv, nb, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q3_0, GGML_TYPE_Q3_0));
         }
     }
 

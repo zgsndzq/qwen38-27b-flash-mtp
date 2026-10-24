@@ -226,6 +226,18 @@ typedef struct {
 } block_q4_0;
 static_assert(sizeof(block_q4_0) == sizeof(ggml_half) + QK4_0 / 2, "wrong q4_0 block size/padding");
 
+#define QK3_0 32
+// 3-bit weights, values 0..7 stored as (w + 4), so the decoded weight is in
+// [-4, 3] times d. qs is a sequential little-endian bitstream: weight j owns
+// bits [3j, 3j+3). 12 bytes hold all 32 weights.
+typedef struct {
+    ggml_half d;                     // delta
+    uint8_t qs[(QK3_0 * 3) / 8];     // 12 B, 3 trits per weight
+} block_q3_0;
+static_assert(sizeof(block_q3_0) == sizeof(ggml_half) + (QK3_0 * 3) / 8, "wrong q3_0 block size/padding");
+#define QR3_0 1
+#define QI3_0 (QK3_0 / (4 * QR3_0))
+
 #define QK4_1 32
 typedef struct {
     GGML_EXTENSION union {

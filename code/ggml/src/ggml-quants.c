@@ -531,6 +531,68 @@ void dequantize_row_q4_0(const block_q4_0 * GGML_RESTRICT x, float * GGML_RESTRI
     }
 }
 
+
+void quantize_row_q3_0_ref(const float * GGML_RESTRICT x, block_q3_0 * GGML_RESTRICT y, int64_t k) {
+    static const int qk = QK3_0;
+
+    assert(k % qk == 0);
+
+    const int nb = k / qk;
+
+    for (int i = 0; i < nb; i++) {
+        float amax = 0.0f;
+
+        for (int j = 0; j < qk; j++) {
+            const float v = x[i*qk + j];
+            amax = MAX(amax, fabsf(v));
+        }
+
+        // 4 is the top of the unsigned 3-bit range, so d is amax/4 and the
+        // decoded weights span [-amax, 0.75*amax].
+        const float d  = amax / (qk/8);
+        const float id = d ? 1.0f/d : 0.0f;
+
+        y[i].d = GGML_FP32_TO_FP16(d);
+
+        uint8_t * qs = y[i].qs;
+        memset(qs, 0, sizeof(y[i].qs));
+
+        for (int j = 0; j < qk; j++) {
+            const float x0 = x[i*qk + j]*id;
+            int q = (int)(x0 + 4.5f); // round to nearest, offset into 0..7
+            q = MIN(7, MAX(0, q));
+
+            const int bit = 3*j;
+            qs[bit >> 3] |= (uint8_t)(q << (bit & 7));
+            if ((bit & 7) > 5) {
+                qs[(bit >> 3) + 1] |= (uint8_t)(q >> (8 - (bit & 7)));
+            }
+        }
+    }
+}
+
+void dequantize_row_q3_0(const block_q3_0 * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
+    static const int qk = QK3_0;
+
+    assert(k % qk == 0);
+
+    const int nb = k / qk;
+
+    for (int i = 0; i < nb; i++) {
+        const float d = GGML_FP16_TO_FP32(x[i].d);
+        const uint8_t * qs = x[i].qs;
+
+        for (int j = 0; j < qk; j++) {
+            const int bit = 3*j;
+            uint8_t u = qs[bit >> 3] >> (bit & 7);
+            if ((bit & 7) > 5) {
+                u |= qs[(bit >> 3) + 1] << (8 - (bit & 7));
+            }
+            y[i*qk + j] = ((int)(u & 7) - 4) * d;
+        }
+    }
+}
+
 void dequantize_row_q4_1(const block_q4_1 * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
     static const int qk = QK4_1;
 

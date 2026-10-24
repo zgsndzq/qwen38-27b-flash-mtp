@@ -174,6 +174,8 @@ static void ggml_cuda_flash_attn_ext_mma_f16(ggml_backend_cuda_context & ctx, gg
             if (ggml_cuda_fattn_mma_kv_native_supported(dst)) {
                 if (K->type == GGML_TYPE_Q4_0) {
                     ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2<128, 128, GGML_TYPE_Q4_0>(ctx, dst);
+                } else if (K->type == GGML_TYPE_Q3_0) {
+                    ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2<128, 128, GGML_TYPE_Q3_0>(ctx, dst);
                 } else {
                     ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2<128, 128, GGML_TYPE_Q8_0>(ctx, dst);
                 }
@@ -202,7 +204,9 @@ static void ggml_cuda_flash_attn_ext_mma_f16(ggml_backend_cuda_context & ctx, gg
             if (ggml_cuda_fattn_mma_kv_native_supported(dst)) {
                 if (K->type == GGML_TYPE_Q4_0) {
                     ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2<256, 256, GGML_TYPE_Q4_0>(ctx, dst);
-                } else {
+                } else if (K->type == GGML_TYPE_Q3_0) {
+                    ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2<256, 256, GGML_TYPE_Q3_0>(ctx, dst);
+                                    } else {
                     ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2<256, 256, GGML_TYPE_Q8_0>(ctx, dst);
                 }
                 break;
@@ -355,6 +359,7 @@ static fattn_vec_case_t ggml_cuda_get_fattn_vec_case(const int64_t head_size, co
     FATTN_VEC_CASES_ALL_D(Q5_0, Q8_0)
     FATTN_VEC_CASES_ALL_D(Q5_1, Q8_0)
     FATTN_VEC_CASES_ALL_D(Q8_0, Q8_0)
+    FATTN_VEC_CASES_ALL_D(Q3_0, Q3_0)
     FATTN_VEC_CASES_ALL_D(BF16, Q8_0)
 
     FATTN_VEC_CASES_ALL_D(F16,  BF16)
@@ -407,6 +412,7 @@ static bool ggml_cuda_fattn_kv_type_supported(const ggml_type type) {
         case GGML_TYPE_Q5_0:
         case GGML_TYPE_Q5_1:
         case GGML_TYPE_Q8_0:
+        case GGML_TYPE_Q3_0:
             return true;
         default:
             return false;

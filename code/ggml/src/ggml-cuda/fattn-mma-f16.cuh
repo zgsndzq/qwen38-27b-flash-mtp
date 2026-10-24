@@ -363,7 +363,7 @@ static constexpr __device__ int ggml_cuda_fattn_mma_get_nstages(const int DKQ, c
 // for the worst case at graph allocation) and no full-cache conversion pass per micro-batch. cp.async cannot
 // dequantize, so these variants always run the single-stage register loader.
 static constexpr __host__ __device__ bool ggml_cuda_fattn_mma_kv_native(const ggml_type type_KV) {
-    return type_KV == GGML_TYPE_Q4_0 || type_KV == GGML_TYPE_Q8_0;
+    return type_KV == GGML_TYPE_Q4_0 || type_KV == GGML_TYPE_Q8_0 || type_KV == GGML_TYPE_Q3_0;
 }
 
 static __host__ int ggml_cuda_fattn_mma_get_nstages(const int DKQ, const int DV, const int ncols1, const int ncols2, const int cc, const ggml_type type_KV) {
@@ -507,6 +507,29 @@ static __device__ __forceinline__ void flash_attn_ext_f16_store_q8_0_block(
     }
 }
 
+// Dequantize one q3_0 block (32 weights) given its scale and the 12 payload bytes as 3 words, store 16 half2.
+// Weight j owns bits [3j, 3j+3), decoded value is (q - 4)*d with q in [0, 7]. Scalar conversions: 3-trit values
+// do not pack into a half2 mantissa trick the way nibble quants do.
+static __device__ __forceinline__ void flash_attn_ext_f16_store_q3_0_block(
+        half2 * const __restrict__ dst, const float d, uint32_t q0, uint32_t q1, uint32_t q2) {
+    // weight j owns bits [3j, 3j+3) of the 96-bit payload, value (u - 4)*d, u in [0, 7].
+    // The pair (2j, 2j+1) needs 6 consecutive bits: the shift-crossing test covers the second weight too.
+    const uint32_t q[3] = {q0, q1, q2};
+#pragma unroll
+    for (int j = 0; j < 32; j += 2) {
+        const int bit = 3*j;
+        const int w_i = bit >> 5;
+        const int sh  = bit & 31;
+        uint32_t u = q[w_i] >> sh;
+        if (sh + 6 > 32) {
+            u |= q[w_i + 1] << (32 - sh);
+        }
+        const float v0 = (float) ((int) (u       & 7) - 4) * d;
+        const float v1 = (float) (((int) (u >> 3) & 7) - 4) * d;
+        dst[j/2] = __floats2half2_rn(v0, v1);
+    }
+}
+
 // Loads a [nbatch_fa x ne] tile of a q4_0 / q8_0 K or V cache and dequantizes it into the F16 shared tile, in the
 // same layout the F16 loader produces. KV points at byte 0 of tile row 0, e0 / ne are the element offset and count
 // within a row (multiples of 64), stride_KV is the row stride in bytes. Each thread handles two adjacent blocks
@@ -516,11 +539,12 @@ template<ggml_type type_KV, int stride_tile, int nwarps, int nbatch_fa, bool oob
 static __device__ __forceinline__ void flash_attn_ext_f16_load_tile_q(
         const char * const __restrict__ KV, half2 * const __restrict__ tile_KV,
         const int e0, const int ne, const int stride_KV, const int i_sup) {
-    static_assert(type_KV == GGML_TYPE_Q4_0 || type_KV == GGML_TYPE_Q8_0, "unsupported quantized K/V type");
+    static_assert(type_KV == GGML_TYPE_Q4_0 || type_KV == GGML_TYPE_Q8_0 || type_KV == GGML_TYPE_Q3_0,
+                  "unsupported quantized K/V type");
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int nthreads  = nwarps*warp_size;
-    constexpr int bs        = 32;                                 // weights per block, both types
-    constexpr int ts        = type_KV == GGML_TYPE_Q4_0 ? 18 : 34; // bytes per block
+    constexpr int bs        = 32;                                              // weights per block, all types
+    constexpr int ts        = type_KV == GGML_TYPE_Q4_0 ? 18 : type_KV == GGML_TYPE_Q3_0 ? 14 : 34; // bytes per block
     constexpr int nwords    = 2*ts/4;                             // 32-bit words per block pair: 9 or 17
     static_assert((2*ts) % 4 == 0, "block pair is not word aligned");
 
@@ -547,7 +571,15 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile_q(
             w[k] = __ldg(src + k);
         }
 
-        if constexpr (type_KV == GGML_TYPE_Q4_0) {
+        if constexpr (type_KV == GGML_TYPE_Q3_0) {
+            // 28 bytes = 7 words per pair. block 0: d = bytes 0-1, qs = bytes 2-13. block 1: d = bytes 14-15,
+            // qs = bytes 16-27 (= w4..w6).
+            const float d0 = __half2float(__ushort_as_half((unsigned short) (w[0] & 0xFFFF)));
+            const float d1 = __half2float(__ushort_as_half((unsigned short) (w[3] >> 16)));
+            flash_attn_ext_f16_store_q3_0_block(dst, d0,
+                __byte_perm(w[0], w[1], 0x5432), __byte_perm(w[1], w[2], 0x5432), __byte_perm(w[2], w[3], 0x5432));
+            flash_attn_ext_f16_store_q3_0_block(dst + bs/2, d1, w[4], w[5], w[6]);
+        } else if constexpr (type_KV == GGML_TYPE_Q4_0) {
             // block 0: d = bytes 0-1, qs = bytes 2-17. block 1: d = bytes 18-19, qs = bytes 20-35 (= w5..w8).
             const float d0 = __half2float(__ushort_as_half((unsigned short) (w[0] & 0xFFFF)));
             const float d1 = __half2float(__ushort_as_half((unsigned short) (w[4] >> 16)));
@@ -2204,6 +2236,14 @@ DECL_FATTN_MMA_F16_CASE_KV_ALL_NCOLS2(256, 256,  8, GGML_TYPE_Q4_0)
 DECL_FATTN_MMA_F16_CASE_KV_ALL_NCOLS2(256, 256, 16, GGML_TYPE_Q4_0)
 DECL_FATTN_MMA_F16_CASE_KV_ALL_NCOLS2(256, 256, 32, GGML_TYPE_Q4_0)
 DECL_FATTN_MMA_F16_CASE_KV_ALL_NCOLS2(256, 256, 64, GGML_TYPE_Q4_0)
+DECL_FATTN_MMA_F16_CASE_KV_ALL_NCOLS2(128, 128,  8, GGML_TYPE_Q3_0)
+DECL_FATTN_MMA_F16_CASE_KV_ALL_NCOLS2(128, 128, 16, GGML_TYPE_Q3_0)
+DECL_FATTN_MMA_F16_CASE_KV_ALL_NCOLS2(128, 128, 32, GGML_TYPE_Q3_0)
+DECL_FATTN_MMA_F16_CASE_KV_ALL_NCOLS2(128, 128, 64, GGML_TYPE_Q3_0)
+DECL_FATTN_MMA_F16_CASE_KV_ALL_NCOLS2(256, 256,  8, GGML_TYPE_Q3_0)
+DECL_FATTN_MMA_F16_CASE_KV_ALL_NCOLS2(256, 256, 16, GGML_TYPE_Q3_0)
+DECL_FATTN_MMA_F16_CASE_KV_ALL_NCOLS2(256, 256, 32, GGML_TYPE_Q3_0)
+DECL_FATTN_MMA_F16_CASE_KV_ALL_NCOLS2(256, 256, 64, GGML_TYPE_Q3_0)
 
 DECL_FATTN_MMA_F16_CASE_KV_ALL_NCOLS2(128, 128,  8, GGML_TYPE_Q8_0)
 DECL_FATTN_MMA_F16_CASE_KV_ALL_NCOLS2(128, 128, 16, GGML_TYPE_Q8_0)

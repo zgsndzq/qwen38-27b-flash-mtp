@@ -186,6 +186,55 @@ static __device__ void quantize_f32_iq4_nl_block(const float * __restrict__ x, b
     y->d = sumq2 > 0 ? sumqx/sumq2 : d;
 }
 
+
+// q3_0: 32 weights, 3 bits each, sequential bitstream (weight j owns bits
+// [3j, 3j+3)). Decoded weight = (u - 4) * d, u in 0..7. q3_0_unpack3 lives in
+// dequantize.cuh.
+static __device__ void quantize_f32_q3_0_block(const float * __restrict__ x, block_q3_0 * __restrict__ y) {
+    float amax = 0.0f;
+
+    for (int j = 0; j < QK3_0; ++j) {
+        amax = fmaxf(amax, fabsf(x[j]));
+    }
+
+    const float d  = amax / 4.0f;
+    const float id = d ? 1.0f/d : 0.0f;
+
+    y->d = d;
+
+    uint8_t * qs = y->qs;
+#pragma unroll
+    for (int j = 0; j < (QK3_0 * 3) / 8; ++j) {
+        qs[j] = 0;
+    }
+
+    for (int j = 0; j < QK3_0; ++j) {
+        int q = (int) (x[j]*id + 4.5f);
+        q = min(7, max(0, q));
+
+        const int bit = 3*j;
+        qs[bit >> 3] |= (uint8_t) (q << (bit & 7));
+        if ((bit & 7) > 5) {
+            qs[(bit >> 3) + 1] |= (uint8_t) (q >> (8 - (bit & 7)));
+        }
+    }
+}
+
+static __device__ void cpy_blck_f32_q3_0(const char * cxi, char * cdsti) {
+    quantize_f32_q3_0_block((const float *) cxi, (block_q3_0 *) cdsti);
+}
+
+static __device__ void cpy_blck_q3_0_f32(const char * cxi, char * cdsti) {
+    const block_q3_0 * x = (const block_q3_0 *) cxi;
+    float * cdstf = (float *) cdsti;
+
+    const float d = x->d;
+
+    for (int j = 0; j < QK3_0; ++j) {
+        cdstf[j] = q3_0_unpack3(x->qs, j) * d;
+    }
+}
+
 // Wrapper functions for cpy.cu compatibility
 static __device__ void cpy_blck_f32_q4_0(const char * cxi, char * cdsti) {
     quantize_f32_q4_0_block((const float *)cxi, (block_q4_0 *)cdsti);

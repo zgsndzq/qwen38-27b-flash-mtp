@@ -430,6 +430,12 @@ extern "C" {
         GGML_TYPE_NVFP4   = 40, // NVFP4 (4 blocks, E4M3 scale)
         GGML_TYPE_Q1_0    = 41,
         GGML_TYPE_Q2_0    = 42,
+        // Prism-private 3-bit type for K/V caches. Simple symmetric block like
+        // q4_0 (32 values, one f16 scale) with 3 bits per value packed as a
+        // sequential bitstream: 14 bytes per block against q4_0's 18, so a
+        // 128K context's K/V costs about 22 percent less. NOT a GGUF weight
+        // format -- only valid as a -ctk / -ctv cache type.
+        GGML_TYPE_Q3_0    = 43,
         // Prism-private Q2_0 at group size 128 (upstream Q2_0 is group 64). High id so it
         // slots above upstream types; type_traits is sized to COUNT (143) with 43..141 unused.
         GGML_TYPE_PQ2_0 = 142,
