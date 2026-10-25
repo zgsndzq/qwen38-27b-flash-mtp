@@ -3,16 +3,14 @@ setlocal
 cd /d "%~dp0"
 
 rem ===========================================================================
-rem  llama.cpp-qwen38-flash runtime launcher
+rem  Qwen3.8-27B-Flash-MTP  :18080   --  agent default profile
 rem
-rem  Where the engine binary comes from -- this script accepts both layouts:
-rem    1. prebuilt release  : extract the release zip here  -> build\bin
-rem    2. built from source : code\_build_q8.bat writes it  -> build\src\bin
-rem  Your own build wins when both exist.
+rem    thinking ON, effort=low, cap 2048   |  q3_0 K/V, 88K cells, CTX 128K
+rem    slot save/restore across restarts   |  MTP + ngram draft, width <= 4
 rem
-rem  All of OUR switches live in features.ini, which the engine reads itself
-rem  through --features-file. Only upstream-known parameters are set here.
-rem  This file must stay ASCII + CRLF - cmd breaks on anything else.
+rem  Binary: build\src\bin (own build), else build\bin (release zip).
+rem  Our switches live in features.ini [qwen]; numbers live here.
+rem  ASCII + CRLF only - cmd mis-parses anything else.
 rem ===========================================================================
 
 set "SERVER="
@@ -21,14 +19,12 @@ if not defined SERVER if exist "%~dp0build\bin\llama-server.exe" set "SERVER=%~d
 if not defined SERVER (
   echo [error] llama-server.exe not found.
   echo         prebuilt : extract the release zip into this folder
-  echo         from src : copy code\build.local.example.bat code\build.local.bat
-  echo                    then run code\_build_q8.bat
+  echo         from src : run code\_build_q8.bat first
   pause
   exit /b 1
 )
 
-rem CUDA runtime dlls. The prebuilt zip ships them under build\cuda; a user who
-rem built from source already has the CUDA Toolkit on PATH.
+rem CUDA runtime dlls: shipped under build\cuda in the zip, on PATH otherwise
 if exist "%~dp0build\cuda\bin" (
   set "PATH=%~dp0build\cuda\bin;%PATH%"
   set "CUDA_PATH=%~dp0build\cuda"
@@ -37,68 +33,64 @@ set "PATH=%SERVER%;%~dp0build\bin;%PATH%"
 
 set "MODEL=Qwen3.8-27B-Flash-MTP.gguf"
 set "CTX=131072"
-rem KV precision + VRAM cell budget, all configured HERE (single source).
-rem features.ini no longer carries the numbers: --kv-vram-cells and GGML_CUDA_FA_CHUNK
-rem below are derived from CTK/CTV, so the pair can never desync.
-rem   q4_0/q4_0  18 KB/cell  -> 65536 cells  (1152 MiB)  best accuracy
-rem   q4_0/q3_0  NOT USABLE: mixed types have no compiled FA kernel pair,
-rem   every op falls back to a full f16 copy (10x slower). Same type only.
-rem   q3_0/q3_0  14 KB/cell  -> 90112 cells  (1232 MiB)  set CTK/CTV to q3_0 for 90K
-rem Per cell = 4 KV heads x 256 wide x K+V x 16 attn layers. Cells past the
-rem tier live in pinned host RAM (CUDA VMM); CTX stays 131072 either way.
-rem Sizes leave ~400 MiB headroom: filling the card triggers VMM page
-rem migration on the weights and decode drops ~10x (measured, see task.md T16 #16).
+
+rem ---- K/V and VRAM tier ----------------------------------------------------
+rem  CELLS comes from CTK/CTV and GGML_CUDA_FA_CHUNK must stay equal to it,
+rem  otherwise deep prefill leaves the fast path and drops ~6x.
+rem  q4_0 = 18 KB/cell -> 65536 (1152 MiB)  |  q3_0 = 14 KB/cell -> 90112 (1232 MiB)
+rem  same type on both sides: a mixed pair has no FA kernel and copies to f16
+rem  cells past CELLS stay in pinned host RAM; CTX is unaffected
+rem  6 GB card: drop to q4_0 / 65536 or lower
 set "CTK=q3_0"
 set "CTV=q3_0"
-rem tier size lookup for the (K,V) pair above
 set "CELLS=90112"
 if "%CTK%%CTV%"=="q4_0q4_0" set "CELLS=65536"
 if "%CTK%%CTV%"=="q3_0q3_0" set "CELLS=90112"
 set "GGML_CUDA_FA_CHUNK=%CELLS%"
-rem thinking block token cap. -1 = unlimited, 0 = end at once, N>0 = hard cap.
-rem This is the ONLY knob that actually bounds thinking length. reasoning_effort is just
-rem a sentence the chat template writes into the system block - the model may ignore it.
-rem Standard for this model, see docs/ONE-MODEL-TWO-APIS.md: 2048 plus a message.
+
+rem ---- thinking -------------------------------------------------------------
+rem  EFFORT: template default, overridable per request (minimal|low|medium|high|xhigh)
+rem  REBUDGET: the only real cap -- -1 unlimited, 0 stop now, N>0 cap
+rem  REBMSG: tokenised verbatim before the end-of-thinking tag; plain text only
+rem  max_tokens is the client's budget (llmchat), never set here
+set "EFFORT=low"
 set "REBUDGET=2048"
-rem The message is tokenized verbatim and forced just before the end-of-thinking tag,
-rem so it must be plain text - no \n escapes, nothing is unescaped anywhere.
 set "REBMSG= Budget exceeded, answer directly."
-rem draft width ceiling, the adaptive controller stays at or below it.
+
+rem ---- draft ----------------------------------------------------------------
+rem  DRAFT_N: adaptive width ceiling (2 = fastest, 4 = best quality)
+rem  NMATCH: preceding tokens that must match before the ngram lookup fires
+rem  NGMIN: consecutive matches to fire; NGMAX / LOOKUP_N: per-draft caps
+rem  BENCH=1 drops the ngram drafter (it warms up, so timing needs it off)
 set "DRAFT_N=4"
-rem ngram lookup drafter. NMATCH = preceding tokens that must match before it looks,
-rem NGMIN = minimum consecutive match to fire, NGMAX / LOOKUP_N = per-draft caps.
 set "NMATCH=24"
-rem BENCH=1 keeps the MTP draft head and drops the ngram lookup drafter. The ngram cache
-rem fills up over a conversation, so a cold first request (~46 t/s) and a warm sixth (~177)
-rem are not comparable -- set this to 1 when timing an A/B, back to 0 for production.
-set "BENCH=0"
-set "SPECTYPE=ngram-mod,draft-mtp-adaptive"
-if "%BENCH%"=="1" set "SPECTYPE=draft-mtp-adaptive"
 set "NGMIN=24"
 set "NGMAX=24"
 set "LOOKUP_N=%NGMAX%"
+set "BENCH=0"
+set "SPECTYPE=ngram-mod,draft-mtp-adaptive"
+if "%BENCH%"=="1" set "SPECTYPE=draft-mtp-adaptive"
 
 title Qwen3.8-27B-Flash-MTP :18080
 
-rem a stale instance keeps :18080 and its VRAM, so kill it before binding again.
+rem a stale instance holds the port and its VRAM
 taskkill /F /IM llama-server.exe >nul 2>nul
 ping -n 3 127.0.0.1 >nul
 
-rem vision projector. VISION=1 mounts it, but only when the file is actually there.
-rem Without mmproj the server refuses every image request, so mount what exists only.
+rem vision projector, mounted only when VISION=1 and the file exists
 set "VISION=0"
 set "MMPROJ=%~dp0weights\mmproj-Qwen3.8-27B-Q8_0.gguf"
 set "VISARG="
 if "%VISION%"=="1" if exist "%MMPROJ%" set "VISARG=--mmproj %MMPROJ% --image-min-tokens 1024"
 
-rem KV slot store: llmchat saves and restores a whole conversation here.
-rem about 18 KB per token, kept under logs so it never enters git.
+rem llmchat saves and restores whole conversations here (~18 KB/token, gitignored)
 if not exist "%~dp0data\slots" mkdir "%~dp0data\slots"
 
 "%SERVER%\llama-server.exe" -m "%~dp0weights\%MODEL%" ^
-  --host 127.0.0.1 --port 18080 --parallel 1 -rea off --no-ui ^
+  --host 127.0.0.1 --port 18080 --parallel 1 --no-ui ^
   --slot-save-path "%~dp0data\slots" ^
   -c %CTX% -b 4096 -t 8 -ngl 99 -fa on -ctk %CTK% -ctv %CTV% --kv-vram-cells %CELLS% ^
+  -rea on --reasoning-effort %EFFORT% ^
   --reasoning-budget %REBUDGET% --reasoning-budget-message "%REBMSG%" ^
   --spec-type %SPECTYPE% --spec-draft-n-max %DRAFT_N% ^
   --spec-lookup-n-max %LOOKUP_N% --spec-ngram-mod-n-min %NGMIN% ^

@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
 # ===========================================================================
-#  llama.cpp-qwen38-flash runtime launcher (Linux)
-#  The Windows equivalent is llmserver.bat -- same parameters, same order.
+#  Qwen3.8-27B-Flash-MTP  :18080   --  agent default profile  (Linux)
 #
-#  Engine binary: build/src/bin (your own build) is preferred, build/bin is the
-#  fallback. There is no prebuilt Linux binary, so in practice you build it.
+#    thinking ON, effort=low, cap 2048   |  q3_0 K/V, 88K cells, CTX 128K
+#    slot save/restore across restarts   |  MTP + ngram draft, width <= 4
 #
-#  All of OUR switches live in features.ini, which the engine reads itself
-#  through --features-file. Only upstream-known parameters are set here.
-#
-#  NOTE: features.ini holds "spec-draft-vocab-map = maps/..." -- a path relative
-#  to the working directory. That is why this script cds to its own folder.
+#  Same profile as llmserver.bat -- change one, change the other.
+#  Our switches live in features.ini [qwen]; numbers live here.
+#  features.ini paths are relative to the working directory, hence the cd.
 # ===========================================================================
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
@@ -24,19 +21,15 @@ else
   cat >&2 <<'EOF'
 [error] llama-server not found. There is no prebuilt Linux binary -- build it:
 
-  git clone https://github.com/zgsndzq/llama.cpp-qwen38-flash code
-  cmake -B build/src -S code -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CUDA_ARCHITECTURES=89 \
-    -DGGML_CUDA=ON -DGGML_CUDA_FA=ON \
-    -DGGML_CUDA_FA_QUANTS=all \
-    -DLLAMA_CURL=OFF
+  cmake -B build/src -S code -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CUDA_ARCHITECTURES=89 -DGGML_CUDA=ON -DGGML_CUDA_FA=ON \
+    -DGGML_CUDA_FA_QUANTS=all -DLLAMA_CURL=OFF
   cmake --build build/src -j --target llama-server llama-bench llama-quantize
 
-  CUDA_ARCH: 89 = Ada (4060/4070/4090), 86 = Ampere (3060/3080). Do not let
-  CMake guess it -- a wrong arch builds fine and then fails to run.
-  GGML_CUDA_FA_QUANTS=all matters: the default list omits the quantised-KV
-  combos this model uses, and the runner then silently converts K/V to f16.
+  ARCH: 89 = Ada (4060/4070/4090), 86 = Ampere (3060/3080) -- do not let CMake
+  guess, a wrong arch builds fine and then fails to run.
+  GGML_CUDA_FA_QUANTS=all: the default list omits the quantised-KV combos this
+  model uses, and the runner then silently converts K/V to f16.
 EOF
   exit 1
 fi
@@ -45,47 +38,75 @@ fi
 export LD_LIBRARY_PATH="$PWD/$SERVER:$PWD/build/bin:${LD_LIBRARY_PATH:-}"
 
 MODEL="Qwen3.8-27B-Flash-MTP.gguf"
-# context size; drop to 32768 on a 6 GB card (and kv-vram-cells in features.ini too)
-CTX=65536
-# KV precision. cells kept in VRAM = features.ini kv-vram-cells (must be <= CTX).
-CTK=q4_0
-CTV=q4_0
-# thinking block token cap. -1 = unlimited, 0 = end at once, N>0 = hard cap.
-REBUDGET=-1
-# draft width ceiling, the adaptive controller stays at or below it.
+CTX=131072
+
+# ---- K/V and VRAM tier ----------------------------------------------------
+#  CELLS comes from CTK/CTV, and GGML_CUDA_FA_CHUNK must equal it, or deep
+#  prefill leaves the fast path (~6x slower).
+#  q4_0 = 18 KB/cell -> 65536 cells (1152 MiB)   [best accuracy]
+#  q3_0 = 14 KB/cell -> 90112 cells (1232 MiB)   [current, fits 88K in VRAM]
+#  Same type on both sides: a mixed pair has no FA kernel and copies to f16.
+#  Cells past CELLS stay in pinned host RAM; CTX is unaffected.
+#  6 GB card: drop to q4_0 / 65536 or lower.
+CTK=q3_0
+CTV=q3_0
+case "$CTK$CTV" in
+  q4_0q4_0) CELLS=65536 ;;
+  *)        CELLS=90112 ;;
+esac
+export GGML_CUDA_FA_CHUNK="$CELLS"
+
+# ---- thinking -------------------------------------------------------------
+#  EFFORT: template default, a request may override (minimal|low|medium|high|xhigh)
+#  REBUDGET: the only real cap -- -1 unlimited, 0 stop now, N>0 cap
+#  REBMSG: tokenised verbatim before the end-of-thinking tag; plain text only
+#  max_tokens is the client's budget (llmchat), never set here
+EFFORT=low
+REBUDGET=2048
+REBMSG=" Budget exceeded, answer directly."
+
+# ---- draft ----------------------------------------------------------------
+#  DRAFT_N: adaptive width ceiling (2 = fastest measured, 4 = best quality)
+#  NMATCH: preceding tokens that must match before the ngram lookup fires
+#  NGMIN: consecutive matches to fire; NGMAX / LOOKUP_N: per-draft caps
+#  BENCH=1 drops the ngram drafter (it warms up, so timing needs it off)
 DRAFT_N=4
-# ngram lookup drafter
 NMATCH=24
 NGMIN=24
-NGMAX=64
+NGMAX=24
 LOOKUP_N=$NGMAX
+BENCH=0
+SPECTYPE=ngram-mod,draft-mtp-adaptive
+if [ "$BENCH" = "1" ]; then SPECTYPE=draft-mtp-adaptive; fi
 
-# a stale instance holds the port and its VRAM, so drop it before binding again
+# a stale instance holds the port and its VRAM
 pkill -f llama-server >/dev/null 2>&1 || true
 sleep 2
 
+# llmchat saves and restores whole conversations here (~18 KB/token, gitignored)
+mkdir -p data/slots
+
 args=(
   -m "$PWD/weights/$MODEL"
-  --host 127.0.0.1 --port 18080 --parallel 1 -rea off --no-ui
+  --host 127.0.0.1 --port 18080 --parallel 1 --no-ui
+  --slot-save-path "$PWD/data/slots"
   -c "$CTX" -b 4096 -t 8 -ngl 99 -fa on -ctk "$CTK" -ctv "$CTV"
-  --reasoning-budget "$REBUDGET"
-  --spec-type ngram-mod,draft-mtp-adaptive --spec-draft-n-max "$DRAFT_N"
+  --kv-vram-cells "$CELLS"
+  -rea on --reasoning-effort "$EFFORT"
+  --reasoning-budget "$REBUDGET" --reasoning-budget-message "$REBMSG"
+  --spec-type "$SPECTYPE" --spec-draft-n-max "$DRAFT_N"
   --spec-lookup-n-max "$LOOKUP_N" --spec-ngram-mod-n-min "$NGMIN"
   --spec-ngram-mod-n-max "$NGMAX"
   --spec-ngram-mod-n-match "$NMATCH"
-  --features-file features.ini
+  --features-file features.ini --features-section qwen
   --alias "Qwen3.8-27B-Flash-MTP"
 )
 
-# vision projector. VISION=1 mounts it, but only when the file is actually there.
-VISION=1
+# vision: 0 = off. 1 mounts it only if the projector file exists.
+VISION=0
 MMPROJ="$PWD/weights/mmproj-Qwen3.8-27B-Q8_0.gguf"
-if [ "$VISION" = "1" ]; then
-  if [ -f "$MMPROJ" ]; then
-    args+=(--mmproj "$MMPROJ" --image-min-tokens 1024)
-  else
-    echo "[warn] $MMPROJ not found - starting without vision" >&2
-  fi
+if [ "$VISION" = "1" ] && [ -f "$MMPROJ" ]; then
+  args+=(--mmproj "$MMPROJ" --image-min-tokens 1024)
 fi
 
 exec "$SERVER/llama-server" "${args[@]}"
