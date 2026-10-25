@@ -134,6 +134,7 @@ def main(argv=None):
     timeout = a.timeout or DEFAULT_TIMEOUT
     base_url = a.base_url.rstrip("/")
     sess.apply_profile(base_url)
+    sess.ensure_slot_dir()
 
     ok, model_id, err = probe(base_url)
     think_txt = ("server default" if think_flag is None else ("on" if think_flag else "off"))

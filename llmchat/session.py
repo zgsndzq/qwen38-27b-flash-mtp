@@ -49,6 +49,15 @@ def apply_profile(base_url):
     SLOT_FILE = SLOT_DIR / SLOT_NAME
 
 
+def ensure_slot_dir():
+    """Recreate the slot directory: it can vanish if data/ is cleaned while the
+    server keeps running, and the server refuses to write a slot without it."""
+    try:
+        SLOT_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+
+
 def session_save(messages, tokens, slot_tokens=None, sys_frame=None,
                  effort_frame=None, think_frame=None):
     """Save the session. slot_tokens = token count of the last saved slot."""
@@ -76,8 +85,19 @@ def session_load():
 
 
 def session_clear(base_url):
+    """Drop the archive, the in-memory slot and the slot files on disk.
+
+    The server's erase only clears the slot in memory. The file written by
+    --slot-save-path stays on disk, so a later start would restore a stale
+    prefix of hundreds of MB that no longer matches the (now empty) history.
+    """
     try:
         SESSION_FILE.unlink()
     except OSError:
         pass
     slot_action(base_url, "erase")
+    for p in (SLOT_FILE, SLOT_FILE.parent / (SLOT_NAME + ".draft")):
+        try:
+            p.unlink()
+        except OSError:
+            pass
