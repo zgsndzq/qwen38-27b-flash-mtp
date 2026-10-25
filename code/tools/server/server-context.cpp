@@ -3555,14 +3555,31 @@ private:
                                         // state at its last position - pos_min == pos_max == n_past-1.
                                         // That made every restored slot look like a mid-context resume
                                         // without a checkpoint, so it was reset and re-prefilled.
-                                        // What actually matters is whether the memory sits exactly at the
-                                        // end of the prompt, which is the case both for a fresh restore
-                                        // and for a normal cached turn.
-                                        const bool full_prefix_present = (mem_pos_max + 1 >= n_past);
+                                        //
+                                        // Keeping n_past is only safe if the seq_rm(pos_next, -1) below
+                                        // can actually be carried out, because common_context_seq_rm()
+                                        // GGML_ABORTs the whole process when the memory refuses:
+                                        //   mem_end == pos_next : nothing to remove, the rm is a no-op.
+                                        //   mem_end >  pos_next : the tail must be rolled back, and a
+                                        //                         recurrent memory can only do that when
+                                        //                         the distance fits in n_rs_seq (0 by
+                                        //                         default here, i.e. no rollback at all).
+                                        //   mem_end <  pos_next : the prefix is incomplete, replays needed.
+                                        // A normal second turn has n_past = shared prefix (a few tokens)
+                                        // while the memory holds the whole previous turn, so it lands in
+                                        // the "> " case and must fall through to the full re-process.
+                                        const llama_pos mem_end  = mem_pos_max + 1;
+                                        const llama_pos rollback = mem_end - pos_next;
+                                        const bool exact     = (rollback == 0);
+                                        const bool rollback_ok =
+                                                rollback > 0 &&
+                                                llama_n_rs_seq(ctx_tgt) > 0 &&
+                                                rollback <= (llama_pos) llama_n_rs_seq(ctx_tgt);
+                                        const bool full_prefix_present = (pos_next > 0) && (exact || rollback_ok);
 
                                         if (full_prefix_present) {
-                                            SLT_INF(slot, "no checkpoint, but pos [0, %d) is in memory - keeping n_past = %d\n",
-                                                    (int) (mem_pos_max + 1), n_past);
+                                            SLT_INF(slot, "no checkpoint, but pos [0, %d) is in memory - keeping n_past = %d, pos_next = %d (rollback %d)\n",
+                                                    (int) mem_end, n_past, (int) pos_next, (int) rollback);
                                         } else {
                                             SLT_TRC(slot, "forcing full prompt re-processing due to lack of cache data (likely due to SWA or hybrid/recurrent memory, see %s)\n",
                                                     "https://github.com/ggml-org/llama.cpp/pull/13194#issuecomment-2868343055");
