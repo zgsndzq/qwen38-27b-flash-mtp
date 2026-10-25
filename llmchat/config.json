@@ -1,0 +1,12 @@
+{
+  "base_url": "http://127.0.0.1:18080",
+  "timeout": 600,
+  "slot_min": 8192,
+  "slot_grow": 2048,
+  "think": "on",
+  "effort": "low",
+  "temp": 0.6,
+  "max_tokens": null,
+  "sys_file": "",
+  "keep_thinking": true
+}

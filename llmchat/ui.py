@@ -1,20 +1,17 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Input and display: TUI/paste input, streaming printer, meta commands.
-
-prompt_toolkit is optional; without it we fall back to single-line input
-plus the /paste mode.
-"""
+"""Input and display; prompt_toolkit is optional."""
 
 import sys
+
+from log import log
 
 EXIT_CMDS = ("quit", "exit", "q", "/quit", "/exit")
 CLEAR_CMDS = ("clear", "/clear", "cls", "/cls")
 PASTE_CMDS = ("/paste",)
 END_CMDS = ("/end", ":::end")
 
-# Force UTF-8 when stdout is redirected: Windows' default cp936 mangles
-# non-ASCII. A real TTY is left alone for Python's console writer.
+# Force UTF-8 when redirected: cp936 mangles non-ASCII. A real TTY is left alone.
 if not sys.stdout.isatty():
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -30,10 +27,7 @@ except ImportError:
 
 
 def _make_bindings():
-    """Invert the multiline keys: Enter submits, Esc+Enter inserts a newline.
-
-    The default is the other way round, which makes a chat session look hung.
-    """
+    """Enter submits, Esc+Enter inserts a newline (the default is the reverse)."""
     from prompt_toolkit.filters import emacs_insert_mode, vi_insert_mode
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.key_binding.bindings.named_commands import get_by_name
@@ -62,7 +56,7 @@ def _read_plain(prompt="you> "):
     line = input(prompt).strip()
     if line.lower() not in PASTE_CMDS:
         return line
-    print("paste mode: paste, then a single /end line to finish (blank lines kept)")
+    log.raw("paste mode: paste, then a single /end line to finish (blank lines kept)")
     lines = []
     while True:
         part = input("... ")
@@ -74,20 +68,17 @@ def _read_plain(prompt="you> "):
 
 def read_user(session=None, prompt="you> "):
     """Single entry point: TUI multiline when available, /paste otherwise."""
-    if HAS_TUI and sys.stdin.isatty():
-        while True:
-            text = (session or new_session()).prompt(prompt)
-            if text.strip():
-                return text
-    return _read_plain(prompt)
+    if not (HAS_TUI and sys.stdin.isatty()):
+        return _read_plain(prompt)
+    ps = session or new_session()
+    while True:
+        text = ps.prompt(prompt)
+        if text.strip():
+            return text
 
 
 def stream_printer(hide_thinking=False):
-    """on_delta(kind, text): thinking and answer printed as they arrive.
-
-    The returned callable carries .streamed, so the caller knows whether
-    anything was already printed.
-    """
+    """on_delta(kind, text); the returned callable carries .streamed."""
     st = {"thinking": False, "content": False}
 
     def on_delta(kind, text):
@@ -95,19 +86,19 @@ def stream_printer(hide_thinking=False):
             st["content"] = False
             if hide_thinking:
                 if not st["thinking"]:
-                    print("\n[thinking...]", end="", flush=True)
+                    log.raw("\n[thinking...]")
                     st["thinking"] = True
                 return
             if not st["thinking"]:
-                print("\n[thinking] ", end="", flush=True)
+                log.raw("\n[thinking] ")
                 st["thinking"] = True
-            print(text, end="", flush=True)
+            log.raw(text)
         else:
             st["thinking"] = False
             if not st["content"]:
-                print("\n\n[answer] ", end="", flush=True)
+                log.raw("\n\n[answer] ")
                 st["content"] = True
-            print(text, end="", flush=True)
+            log.raw(text)
 
     on_delta.streamed = st
     return on_delta

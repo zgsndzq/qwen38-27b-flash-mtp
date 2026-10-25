@@ -1,106 +1,53 @@
-# llmchat — standalone chat client
+# llmchat
 
-Talks to an already running llama-server (for example the one started by
-`..\llmserver.bat`). It never loads a model itself, and it only needs the
-Python standard library.
+小对话客户端，用来测已经在跑的 llama-server（先开 `..\llmserver.bat`）。
+只用 Python 标准库，不加载模型。
 
-## Run it
+## 用法
 
-Double-click `llmchat.bat`. Its settings are variables at the top of the file,
-in the same style as `llmserver.bat`.
-
-Command line equivalent:
+双击 `llmchat.bat` 即可。**配置全在同目录的 `config.json`**，改完直接生效；
+命令行给的参数会覆盖它，例如：
 
 ```
-python chat.py --temp 0.6 --think on --effort low
+python chat.py --think server --temp 0.2
 ```
 
-## Files
+`config.json` 的键和参数同名（下划线写法）：
 
-| File | Purpose |
-|---|---|
-| `chat.py` | entry point: CLI, session resume, main loop |
-| `srvapi.py` | HTTP layer: probe, streaming chat, slot control |
-| `session.py` | session archive, KV slot files, render frames |
-| `ui.py` | input (TUI / paste), streaming printer, meta commands |
-| `llmchat.bat` | launcher: fills in the parameters and calls chat.py. **ASCII only** |
-| `sys.txt` | system prompt (UTF-8, off by default). Without a system prompt configured, no system message is sent at all — there is no built-in fallback |
+```json
+{
+  "base_url": "http://127.0.0.1:18080",
+  "think": "on",
+  "effort": "low",
+  "temp": 0.6,
+  "max_tokens": null,
+  "timeout": 600,
+  "sys_file": "",
+  "keep_thinking": true
+}
+```
 
-## Arguments
+## 主要参数
 
-| chat.py | bat variable | Meaning |
+| 参数 | 取值 / 默认 | 作用 |
 |---|---|---|
-| `--base-url` | — | server address, default `http://127.0.0.1:18080` |
-| `--temp` | — | sampling temperature. empty = send nothing, keep the server `--temp` |
-| `--think` | `THINK` | `on` / `off` / `server` (server = send nothing, keep `-rea`) |
-| `--effort` | `EFFORT` | `xhigh` / `medium` / `low`; omit to keep the server default |
-| `--timeout` | — | seconds of **no data** from the server, default 600 |
-| `--max-tokens` | — | per-turn answer limit; omit for no limit (run to EOS) |
-| `--sys` / `--sys-file` | `SYS` + `SYS_FILE` | system prompt; the file wins |
-| `--hide-thinking` | — | do not print thinking (the request still thinks) |
-| `--no-tui` | — | disable the multiline TUI |
+| `think` | `on` / `off` / `server` | 思考开关；`server` = 不发，用服务端 `-rea` |
+| `effort` | `low`；或 `xhigh` `medium`；留空 | 思考强度；留空 = 服务端默认 |
+| `temp` | 数字；`null` | 采样温度；`null` = 用服务端 `--temp` |
+| `max_tokens` | 数字；`null` | 单轮回答上限；`null` = 到 EOS |
+| `timeout` | 秒，默认 600 | **多久没收到数据**，不是总时长 |
+| `sys_file` | 路径；空 | system prompt 文件，空 = 不发 |
+| `base_url` | 默认 `http://127.0.0.1:18080` | 服务端地址 |
 
-The window title is cosmetic: the server always serves the gguf it loaded, and
-the client cannot pick a model. On start it probes `/v1/models` and prints what
-the server actually has.
+其余命令行开关：`--hide-thinking` 只看答案、`--no-tui` 单行输入、`--once` 问一句就退、
+`--log 文件` 同时写盘、`--quiet` 不屏显。
 
-## In-session meta commands (intercepted locally)
+## 会话内命令
 
-| Command | Effect |
-|---|---|
-| `quit` / `q` / `exit` | leave |
-| `clear` / `cls` | drop the context, keep the system prompt |
-| `/paste` … a single `/end` line | paste multiline text when stdin is not a TTY |
+`quit` / `q` 退出，`clear` 清空上下文并删槽位文件，`/paste` 到 `/end` 贴长文。
 
-## Slots and caches: the prefix must be reproducible token for token
+## 注意
 
-A slot saved with `--slot-save-path` only supports a **strict extension**: the
-new prompt has to extend the stored token sequence, and a single token of
-difference makes the server drop the whole KV and re-compute.
-
-The prefix is decided by three things, and they must be saved and replayed
-together:
-
-| Part | Role | Stored as |
-|---|---|---|
-| system text | first message if configured, otherwise none is sent | `sys_frame` |
-| thinking switch | the template injects the effort sentence only when `enable_thinking` is true | `think_frame` |
-| thinking effort | the literal that goes into the system block | `effort_frame` |
-
-Rules:
-
-1. **Send what is configured.** No `--sys` / `--sys-file` means no system
-   message, with no "sensible default" invented on top.
-2. **History keeps exactly what was sent**, and is never rewritten afterwards.
-3. After saving a slot, the following `session_save()` must write all three
-   frames again; writing only `slot_tokens` resets them to null and the next
-   start replays an empty frame, forking the prefix at the system block.
-4. **A changed frame invalidates the slot** — it is not a reason to force the
-   old frame back on. On start the saved frames are compared with this run's: on
-   a match the slot is restored, on a difference the slot is dropped and the run
-   proceeds with the current settings, printing the difference.
-5. **The thinking block goes back into history** (default). The template renders
-   `<think>...</think>` only when an assistant message carries
-   `reasoning_content`, and the server KV already holds those tokens. Dropping
-   them makes the next prompt shorter than the KV, so the shared prefix breaks
-   at the first thinking turn and everything after it is re-computed. Use
-   `--no-keep-thinking` to trade the cache for context space.
-
-## Timeouts
-
-The timeout guards the **heartbeat**, not total wall time: during prompt eval
-the server sends nothing, which on a long context legitimately takes minutes.
-A timeout on a long prompt does not mean the server is down — raise
-`--timeout` or `LLAMA_CHAT_TIMEOUT`.
-
-## TUI
-
-Enabled automatically when `prompt_toolkit` is installed and stdin is a
-terminal: pasting a large document submits it in one block, **Esc+Enter** adds
-a newline, up/down recall history. Without it the client falls back to
-single-line input plus `/paste`. Force single line with `--no-tui`.
-
-## Dependencies
-
-- Python 3 (standard library only; `prompt_toolkit` is optional)
-- A running llama-server, e.g. `..\llmserver.bat`
+- 会话和槽位文件按端口区分（`llmchat_18080.slot`），换端口不串。
+- 重启后能续接，前提是历史一条没改（含思考块）；改了就从头发一遍。
+- `llmchat.bat` 必须是 ASCII + CRLF。
