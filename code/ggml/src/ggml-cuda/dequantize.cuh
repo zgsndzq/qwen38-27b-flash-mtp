@@ -72,15 +72,6 @@ static __device__ __forceinline__ void dequantize_pq2_0(const void * vx, const i
     v.y = (c1 - 1) * d;
 }
 
-static __device__ __forceinline__ void dequantize_q3_0(const void * vx, const int64_t ib, const int iqs, float2 & v){
-    const block_q3_0 * x = (const block_q3_0 *) vx;
-    const float d = x[ib].d;
-    // qr == 1, so the caller passes an even element index and wants that
-    // element and its neighbour.
-    v.x = q3_0_unpack3(x[ib].qs, iqs + 0) * d;
-    v.y = q3_0_unpack3(x[ib].qs, iqs + 1) * d;
-}
-
 static __device__ __forceinline__ void dequantize_q4_0(const void * vx, const int64_t ib, const int iqs, float2 & v){
     const block_q4_0 * x = (const block_q4_0 *) vx;
 

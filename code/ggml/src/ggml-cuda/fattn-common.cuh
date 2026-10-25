@@ -213,41 +213,6 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_q4_0(
 }
 
 template<int D, int nthreads>
-static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_q3_0(
-    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
-
-    const block_q3_0 * K_q3_0 = (const block_q3_0 *) K_c;
-    GGML_UNUSED(Q_v);
-
-    const int8_t * q8 = (const int8_t *) Q_q8;
-
-    float sum = 0.0f;
-
-    // q3_0 has no dp4a shortcut: a 3-bit weight does not fill a byte, so the
-    // four weights of one int group are unpacked and multiplied one by one.
-    // The zero point is folded into the weight itself (w in [-4, 3]), so unlike
-    // q4_0 there is no sum-of-q correction to apply at the end.
-#pragma unroll
-    for (int k_KQ_0 = 0; k_KQ_0 < int(D/sizeof(int)); k_KQ_0 += nthreads) {
-        const int k_KQ = k_KQ_0 + (nthreads == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads);
-
-        const int i0 = 4*k_KQ;
-        const int ib = i0 / QK3_0;
-
-        int sumi = 0;
-#pragma unroll
-        for (int l = 0; l < 4; ++l) {
-            sumi += q3_0_unpack3(K_q3_0[ib].qs, (i0 % QK3_0) + l) * q8[i0 + l];
-        }
-
-        const float2 Q_ds = ((const float2 *) Q_ds_v)[k_KQ_0/nthreads];
-        sum += __half2float(K_q3_0[ib].d) * Q_ds.x * sumi;
-    }
-
-    return sum;
-}
-
-template<int D, int nthreads>
 static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_q4_1(
     const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
 
@@ -512,30 +477,6 @@ static __device__ __forceinline__ void dequantize_V_q4_0(const void * __restrict
         }
     } else {
         static_assert(std::is_same_v<T, void>, "bad type");
-    }
-}
-
-template <typename T, int ne>
-static __device__ __forceinline__ void dequantize_V_q3_0(const void * __restrict__ vx, void * __restrict__ dst, const int64_t i0) {
-    const block_q3_0 * x = (const block_q3_0 *) vx;
-
-    static_assert(ne == 2 || ne == 4, "bad ne");
-
-    const float d = __half2float(x[i0 / QK3_0].d);
-    const int   j0 = (int) (i0 % QK3_0);
-
-    if constexpr (std::is_same_v<T, float>) {
-        float * dst_f = (float *) dst;
-#pragma unroll
-        for (int l = 0; l < ne; ++l) {
-            dst_f[l] = q3_0_unpack3(x[i0 / QK3_0].qs, j0 + l) * d;
-        }
-    } else {
-        half * dst_h = (half *) dst;
-#pragma unroll
-        for (int l = 0; l < ne; ++l) {
-            dst_h[l] = __float2half(q3_0_unpack3(x[i0 / QK3_0].qs, j0 + l) * d);
-        }
     }
 }
 
