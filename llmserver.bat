@@ -48,8 +48,8 @@ rem Per cell = 4 KV heads x 256 wide x K+V x 16 attn layers. Cells past the
 rem tier live in pinned host RAM (CUDA VMM); CTX stays 131072 either way.
 rem Sizes leave ~400 MiB headroom: filling the card triggers VMM page
 rem migration on the weights and decode drops ~10x (measured, see task.md T16 #16).
-set "CTK=q4_0"
-set "CTV=q4_0"
+set "CTK=q3_0"
+set "CTV=q3_0"
 rem tier size lookup for the (K,V) pair above
 set "CELLS=90112"
 if "%CTK%%CTV%"=="q4_0q4_0" set "CELLS=65536"
