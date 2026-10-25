@@ -1,4 +1,5 @@
 #include "norm.cuh"
+#include "fwht.cuh"
 #include <cstdint>
 
 template <int block_size>
@@ -613,6 +614,120 @@ void ggml_cuda_op_add_rms_norm_fused(
             (const float *) a->data, (const float *) b->data, (const float *) weight->data,
             (float *) add->data, (float *) mul->data, ncols, eps);
     }
+}
+
+// [Residual ADD +] RMS_NORM + MUL(weight) + Hadamard sign flip + FWHT, one row per block (the FFN input of
+// every Bonsai 2 layer, and any other norm whose only consumer is a rotated matmul). Same arithmetic in the
+// same order as add_rms_norm_f32<1024> (or rms_norm_f32<1024> with the multiply) followed by fwht_cuda_block with
+// signs, so the result is bit-identical. The normalized row is also stored when other nodes read it:
+// thread tid holds elements tid + i*1024 for both the norm loop and the butterfly, and the butterfly stages
+// run in ascending stride order whatever the block width (ggml_cuda_fwht_block_butterfly).
+template <int N, bool has_add>
+static __global__ void __launch_bounds__(1024, 1) add_rms_norm_fwht_f32(
+        const float * a, const float * b, const float * weight, const float * signs,
+        float * sum, float * normed, float * dst, const float eps, const float fwht_scale) {
+    constexpr int NT = 1024;
+    constexpr int NE = N / NT;
+    static_assert(N % NT == 0, "transform width must be a multiple of the block");
+
+    __shared__ float s_sum[32];
+    __shared__ float s_fwht[N];
+
+    const int64_t row = blockIdx.x;
+    const int tid  = threadIdx.x;
+    const int lane = tid % ggml_cuda_get_physical_warp_size();
+    a   += row*N;
+    dst += row*N;
+    if constexpr (has_add) {
+        b   += row*N;
+        sum += row*N;
+    }
+    if (normed) {
+        normed += row*N;
+    }
+
+    float x[NE];
+    float tmp = 0.0f;
+#pragma unroll
+    for (int i = 0; i < NE; ++i) {
+        const int col = i*NT + tid;
+        float xi;
+        if constexpr (has_add) {
+            xi = __fadd_rn(a[col], b[col]);
+            sum[col] = xi;
+        } else {
+            xi = a[col];
+        }
+        x[i] = xi;
+        tmp += xi*xi;
+    }
+
+    tmp = block_reduce<block_reduce_method::SUM, NT>(tmp, s_sum);
+    const float scale = rsqrtf(tmp/N + eps);
+
+    float reg[NE];
+#pragma unroll
+    for (int i = 0; i < NE; ++i) {
+        const int col = i*NT + tid;
+        reg[i]  = scale*x[i]*weight[col];
+        if (normed) {
+            normed[col] = reg[i];
+        }
+        reg[i]  = reg[i]*fwht_scale;
+        reg[i] *= signs[col];
+    }
+
+    ggml_cuda_fwht_block_butterfly<N, NT>(reg, s_fwht, tid, lane);
+
+#pragma unroll
+    for (int i = 0; i < NE; ++i) {
+        dst[i*NT + tid] = reg[i];
+    }
+}
+
+bool ggml_cuda_add_rms_norm_fwht_supported(const int ncols) {
+    return ncols == 1024 || ncols == 2048 || ncols == 4096;
+}
+
+void ggml_cuda_op_add_rms_norm_fwht_fused(
+        ggml_backend_cuda_context & ctx, const ggml_tensor * add, const ggml_tensor * rms_norm,
+        const ggml_tensor * weight, const ggml_tensor * signs, ggml_tensor * normed, ggml_tensor * dst) {
+    // without an ADD the norm reads its own source
+    const ggml_tensor * x = add ? add : rms_norm->src[0];
+    const ggml_tensor * a = add ? add->src[0] : x;
+    const ggml_tensor * b = add ? add->src[1] : nullptr;
+    const int ncols = (int) x->ne[0];
+    GGML_ASSERT(ggml_cuda_add_rms_norm_fwht_supported(ncols));
+    GGML_ASSERT(ggml_nelements(dst) == ggml_nelements(x));
+
+    float eps;
+    memcpy(&eps, rms_norm->op_params, sizeof(float));
+    GGML_ASSERT(eps >= 0.0f);
+
+    // fwht_dispatch: scale = 1 / sqrtf(n)
+    const float fwht_scale = 1 / sqrtf(ncols);
+    const int64_t nrows = ggml_nrows(x);
+    cudaStream_t stream = ctx.stream();
+    float * normed_d = normed ? (float *) normed->data : nullptr;
+#define ARF_CASE(NN) \
+    case NN: \
+        if (add) { \
+            add_rms_norm_fwht_f32<NN, true><<<(unsigned) nrows, 1024, 0, stream>>>( \
+                (const float *) a->data, (const float *) b->data, (const float *) weight->data, (const float *) signs->data, \
+                (float *) add->data, normed_d, (float *) dst->data, eps, fwht_scale); \
+        } else { \
+            add_rms_norm_fwht_f32<NN, false><<<(unsigned) nrows, 1024, 0, stream>>>( \
+                (const float *) a->data, nullptr, (const float *) weight->data, (const float *) signs->data, \
+                nullptr, normed_d, (float *) dst->data, eps, fwht_scale); \
+        } \
+        break;
+    switch (ncols) {
+        ARF_CASE(1024)
+        ARF_CASE(2048)
+        ARF_CASE(4096)
+        default: GGML_ABORT("unsupported width");
+    }
+#undef ARF_CASE
 }
 
 void ggml_cuda_op_add_rms_norm_scale_fused(
