@@ -1228,9 +1228,9 @@ static void mul_mat_vec_q_switch_ncols_dst(
 #if !defined(GGML_USE_HIP)
     if constexpr (type == GGML_TYPE_PQ2_0) {
         if (y_layout == GGML_CUDA_Q8_1_PQ2) {
-            // layout_host only picks PQ2 for plain 2D calls without fusion
-            GGML_ASSERT(!ids && nchannels_dst == 1 && nsamples_dst == 1 && !fusion.gate && !fusion.x_bias && !fusion.gate_bias);
-            mul_mat_vec_pq2_0_mc_switch(vx, vy, dst, ncols_x, nrows_x, ncols_dst, stride_row_x, stride_col_y, stride_col_dst, stream);
+            // layout_host only picks PQ2 for plain 2D calls; bias / gate fusion is applied in the kernel's epilogue
+            GGML_ASSERT(!ids && nchannels_dst == 1 && nsamples_dst == 1);
+            mul_mat_vec_pq2_0_mc_switch(vx, vy, dst, ncols_x, nrows_x, ncols_dst, stride_row_x, stride_col_y, stride_col_dst, stream, fusion);
             return;
         }
     }

@@ -217,16 +217,26 @@ static bool fwht_launch(ggml_backend_cuda_context & ctx, const T * src_d, float 
             } \
             return true; \
         }
-#define FWHT_BLOCK_CASE(NN) \
-        case NN: { \
-            const dim3 g((unsigned) rows, 1, 1), b(FWHT_BLOCK_THREADS, 1, 1); \
+#define FWHT_BLOCK_LAUNCH(NN, NTT) { \
+            const dim3 g((unsigned) rows, 1, 1), b(NTT, 1, 1); \
             const ggml_cuda_kernel_launch_params lp = ggml_cuda_kernel_launch_params(g, b, 0, stream); \
             if (signs) { \
-                ggml_cuda_kernel_launch(fwht_cuda_block<NN, FWHT_BLOCK_THREADS, T, true>,  lp, src_d, dst_d, rows, scale, signs, n_blk); \
+                ggml_cuda_kernel_launch(fwht_cuda_block<NN, NTT, T, true>,  lp, src_d, dst_d, rows, scale, signs, n_blk); \
             } else { \
-                ggml_cuda_kernel_launch(fwht_cuda_block<NN, FWHT_BLOCK_THREADS, T, false>, lp, src_d, dst_d, rows, scale, nullptr, 1); \
+                ggml_cuda_kernel_launch(fwht_cuda_block<NN, NTT, T, false>, lp, src_d, dst_d, rows, scale, nullptr, 1); \
             } \
             return true; \
+        }
+    const int nt = ggml_cuda_fwht_block_threads(n, rows);
+#define FWHT_BLOCK_CASE(NN) \
+        case NN: { \
+            if constexpr (NN >= 1024) { \
+                if (nt == 1024) FWHT_BLOCK_LAUNCH(NN, 1024) \
+            } \
+            if constexpr (NN >= 512) { \
+                if (nt == 512) FWHT_BLOCK_LAUNCH(NN, 512) \
+            } \
+            FWHT_BLOCK_LAUNCH(NN, FWHT_BLOCK_THREADS) \
         }
     static const bool legacy = getenv("GGML_CUDA_FWHT_LEGACY") != nullptr;
     if (legacy) {

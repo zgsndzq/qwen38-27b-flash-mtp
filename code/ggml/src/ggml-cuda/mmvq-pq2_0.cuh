@@ -1,4 +1,4 @@
-// PQ2_0 mat-vec for 3-8 columns (plain 2D), tuned on Ada, also taken on Hopper.
+// PQ2_0 mat-vec for 3-8 columns (plain 2D), tuned on Ada, also taken on Hopper, where it also serves 1-2 columns.
 //
 // Why: the generic mmvq kernel loses most of its DRAM throughput from 3 columns on (RTX 4070, Bonsai 2 27B shapes:
 // 44% of peak at 4 columns). Here the activations use GGML_CUDA_Q8_1_PQ2: per column the qs bytes come first,
@@ -9,14 +9,20 @@
 #pragma once
 
 #include "common.cuh"
+#include "unary.cuh"
 
 #define PQ2_0_MC_ROWS  4
 #define PQ2_0_MC_WARPS 4
 
-template <int ncols>
+// Optional fusion (has_fusion, the same epilogue as mul_mat_vec_q): x_bias is added to the result; with has_gate a
+// second weight matrix (gate, same layout and strides) is dotted against the same activations, gate_bias is added to
+// it and the GLU op combines the two. Without fusion the epilogue is a plain store: a runtime bias check there costs
+// the 8-column verify kernel ~12% on H200.
+template <int ncols, bool has_fusion, bool has_gate>
 __global__ void __launch_bounds__(PQ2_0_MC_WARPS * 32, 3)
 mul_mat_vec_pq2_0_mc(const void * vx_, const void * vy_, float * dst_,
-        const int ncols_x, const int nrows_x, const int stride_row_x, const int stride_col_y, const int stride_col_dst) {
+        const int ncols_x, const int nrows_x, const int stride_row_x, const int stride_col_y, const int stride_col_dst,
+        const float * x_bias, const void * vgate_, const float * gate_bias, const ggml_glu_op glu_op) {
     // Plain pointer parameters, restrict-qualified locals: GGML_CUDA_RESTRICT differs between the host and device
     // passes, which breaks the template stub. Same pattern as mul_mat_vec_q.
     const void * GGML_CUDA_RESTRICT vx  = vx_;
@@ -37,10 +43,14 @@ mul_mat_vec_pq2_0_mc(const void * vx_, const void * vy_, float * dst_,
     const char *  y         = (const char *) vy;
 
     float acc[PQ2_0_MC_ROWS][ncols] = {};
+    [[maybe_unused]] float accg[PQ2_0_MC_ROWS][ncols] = {};
+    [[maybe_unused]] const void * GGML_CUDA_RESTRICT vgate = vgate_;
 
     for (int c = lane; c < nchunk; c += WARP_SIZE) {
         uint32_t w0[PQ2_0_MC_ROWS], w1[PQ2_0_MC_ROWS];
         float    d2[PQ2_0_MC_ROWS];
+        [[maybe_unused]] uint32_t g0[PQ2_0_MC_ROWS], g1[PQ2_0_MC_ROWS];
+        [[maybe_unused]] float    e2[PQ2_0_MC_ROWS];
 #pragma unroll
         for (int r = 0; r < PQ2_0_MC_ROWS; ++r) {
             const int row = min(row0 + r, nrows_x - 1); // clamped rows are computed but not stored
@@ -49,6 +59,13 @@ mul_mat_vec_pq2_0_mc(const void * vx_, const void * vy_, float * dst_,
             d2[r] = __half2float(blk->d);
             w0[r] = (uint32_t) qp[0] | ((uint32_t) qp[1] << 16);
             w1[r] = (uint32_t) qp[2] | ((uint32_t) qp[3] << 16);
+            if constexpr (has_gate) {
+                const block_pq2_0 * gblk = (const block_pq2_0 *) vgate + (int64_t) row*stride_row_x + (c >> 2);
+                const uint16_t    * gp   = (const uint16_t *) (gblk->qs + (c & 3)*8);
+                e2[r] = __half2float(gblk->d);
+                g0[r] = (uint32_t) gp[0] | ((uint32_t) gp[1] << 16);
+                g1[r] = (uint32_t) gp[2] | ((uint32_t) gp[3] << 16);
+            }
         }
 
         int4  a0[ncols], a1[ncols];
@@ -85,6 +102,27 @@ mul_mat_vec_pq2_0_mc(const void * vx_, const void * vy_, float * dst_,
                 sumi = ggml_cuda_dp4a(t[7], a1[j].w, sumi);
                 acc[r][j] += d2[r] * d8[j] * (float) (sumi - qsum[j]);
             }
+            if constexpr (has_gate) {
+                int tg[8];
+#pragma unroll
+                for (int k = 0; k < 4; ++k) {
+                    tg[k]     = (int) ((g0[r] >> (2*k)) & 0x03030303u);
+                    tg[4 + k] = (int) ((g1[r] >> (2*k)) & 0x03030303u);
+                }
+#pragma unroll
+                for (int j = 0; j < ncols; ++j) {
+                    int sumi = 0;
+                    sumi = ggml_cuda_dp4a(tg[0], a0[j].x, sumi);
+                    sumi = ggml_cuda_dp4a(tg[1], a0[j].y, sumi);
+                    sumi = ggml_cuda_dp4a(tg[2], a0[j].z, sumi);
+                    sumi = ggml_cuda_dp4a(tg[3], a0[j].w, sumi);
+                    sumi = ggml_cuda_dp4a(tg[4], a1[j].x, sumi);
+                    sumi = ggml_cuda_dp4a(tg[5], a1[j].y, sumi);
+                    sumi = ggml_cuda_dp4a(tg[6], a1[j].z, sumi);
+                    sumi = ggml_cuda_dp4a(tg[7], a1[j].w, sumi);
+                    accg[r][j] += e2[r] * d8[j] * (float) (sumi - qsum[j]);
+                }
+            }
         }
     }
 
@@ -94,10 +132,31 @@ mul_mat_vec_pq2_0_mc(const void * vx_, const void * vy_, float * dst_,
     for (int r = 0; r < PQ2_0_MC_ROWS; ++r) {
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
-            const float v = warp_reduce_sum<WARP_SIZE>(acc[r][j]);
+            float v = warp_reduce_sum<WARP_SIZE>(acc[r][j]);
+            [[maybe_unused]] float gv = 0.0f;
+            if constexpr (has_gate) {
+                gv = warp_reduce_sum<WARP_SIZE>(accg[r][j]);
+            }
             const int row = row0 + r;
             if (lane == 0 && row < nrows_x) {
-                dst[(int64_t) j*stride_col_dst + row] = v;
+                const int64_t o = (int64_t) j*stride_col_dst + row;
+                if constexpr (has_fusion) {
+                    if (x_bias) {
+                        v += x_bias[o];
+                    }
+                }
+                if constexpr (has_gate) {
+                    if (gate_bias) {
+                        gv += gate_bias[o];
+                    }
+                    switch (glu_op) {
+                        case GGML_GLU_OP_SWIGLU:     v *= ggml_cuda_op_silu_single(gv);          break;
+                        case GGML_GLU_OP_GEGLU:      v *= ggml_cuda_op_gelu_single(gv);          break;
+                        case GGML_GLU_OP_SWIGLU_OAI: v  = ggml_cuda_op_swiglu_oai_single(gv, v); break;
+                        default:                     v *= gv;                                    break;
+                    }
+                }
+                dst[o] = v;
             }
         }
     }
@@ -106,25 +165,38 @@ mul_mat_vec_pq2_0_mc(const void * vx_, const void * vy_, float * dst_,
 template <int ncols>
 static void mul_mat_vec_pq2_0_mc_launch(
         const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
-        const int stride_row_x, const int stride_col_y, const int stride_col_dst, cudaStream_t stream) {
+        const int stride_row_x, const int stride_col_y, const int stride_col_dst, cudaStream_t stream,
+        const ggml_cuda_mm_fusion_args_device & fusion) {
     const int nwarps = (nrows_x + PQ2_0_MC_ROWS - 1) / PQ2_0_MC_ROWS;
     const dim3 block_nums((nwarps + PQ2_0_MC_WARPS - 1) / PQ2_0_MC_WARPS, 1, 1);
     const dim3 block_dims(PQ2_0_MC_WARPS * WARP_SIZE, 1, 1);
     const ggml_cuda_kernel_launch_params lp = ggml_cuda_kernel_launch_params(block_nums, block_dims, 0, stream);
-    ggml_cuda_kernel_launch(mul_mat_vec_pq2_0_mc<ncols>, lp, vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst);
+    if (fusion.gate) {
+        ggml_cuda_kernel_launch(mul_mat_vec_pq2_0_mc<ncols, true, true>, lp, vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst,
+            (const float *) fusion.x_bias, fusion.gate, (const float *) fusion.gate_bias, fusion.glu_op);
+    } else if (fusion.x_bias) {
+        ggml_cuda_kernel_launch(mul_mat_vec_pq2_0_mc<ncols, true, false>, lp, vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst,
+            (const float *) fusion.x_bias, nullptr, nullptr, fusion.glu_op);
+    } else {
+        ggml_cuda_kernel_launch(mul_mat_vec_pq2_0_mc<ncols, false, false>, lp, vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst,
+            nullptr, nullptr, nullptr, fusion.glu_op);
+    }
 }
 
 static void mul_mat_vec_pq2_0_mc_switch(
         const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x, const int ncols_dst,
-        const int stride_row_x, const int stride_col_y, const int stride_col_dst, cudaStream_t stream) {
+        const int stride_row_x, const int stride_col_y, const int stride_col_dst, cudaStream_t stream,
+        const ggml_cuda_mm_fusion_args_device & fusion) {
     GGML_ASSERT(ncols_x % QK_PQ2_0 == 0);
     switch (ncols_dst) {
-        case 3: mul_mat_vec_pq2_0_mc_launch<3>(vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream); break;
-        case 4: mul_mat_vec_pq2_0_mc_launch<4>(vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream); break;
-        case 5: mul_mat_vec_pq2_0_mc_launch<5>(vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream); break;
-        case 6: mul_mat_vec_pq2_0_mc_launch<6>(vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream); break;
-        case 7: mul_mat_vec_pq2_0_mc_launch<7>(vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream); break;
-        case 8: mul_mat_vec_pq2_0_mc_launch<8>(vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream); break;
+        case 1: mul_mat_vec_pq2_0_mc_launch<1>(vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream, fusion); break;
+        case 2: mul_mat_vec_pq2_0_mc_launch<2>(vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream, fusion); break;
+        case 3: mul_mat_vec_pq2_0_mc_launch<3>(vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream, fusion); break;
+        case 4: mul_mat_vec_pq2_0_mc_launch<4>(vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream, fusion); break;
+        case 5: mul_mat_vec_pq2_0_mc_launch<5>(vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream, fusion); break;
+        case 6: mul_mat_vec_pq2_0_mc_launch<6>(vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream, fusion); break;
+        case 7: mul_mat_vec_pq2_0_mc_launch<7>(vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream, fusion); break;
+        case 8: mul_mat_vec_pq2_0_mc_launch<8>(vx, vy, dst, ncols_x, nrows_x, stride_row_x, stride_col_y, stride_col_dst, stream, fusion); break;
         default: GGML_ABORT("unsupported column count for the PQ2_0 multi-column kernel");
     }
 }

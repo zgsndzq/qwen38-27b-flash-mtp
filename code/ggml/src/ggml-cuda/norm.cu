@@ -622,10 +622,15 @@ void ggml_cuda_op_add_rms_norm_fused(
 // signs, so the result is bit-identical. The normalized row is also stored when other nodes read it:
 // thread tid holds elements tid + i*1024 for both the norm loop and the butterfly, and the butterfly stages
 // run in ascending stride order whatever the block width (ggml_cuda_fwht_block_butterfly).
-template <int N, bool has_add>
+//
+// With q8 the transformed row is not stored in F32 but quantized to q8_1 straight away, in the layout the consuming
+// mat-vecs expect (AOS: 1 column; PQ2: the PQ2_0 multi-column path), with the same per-32 arithmetic and stores as
+// quantize_q8_1<layout>, so the q8_1 rows are bit-identical to quantizing the F32 result. dst then holds the q8_1 rows
+// (N/32 block_q8_1 per row, the row width needs no padding).
+template <int N, int B, bool has_add, bool q8, ggml_cuda_q8_1_layout layout>
 static __global__ void __launch_bounds__(1024, 1) add_rms_norm_fwht_f32(
         const float * a, const float * b, const float * weight, const float * signs,
-        float * sum, float * normed, float * dst, const float eps, const float fwht_scale) {
+        float * sum, float * normed, void * dst_ptr, const float eps, const float fwht_scale) {
     constexpr int NT = 1024;
     constexpr int NE = N / NT;
     static_assert(N % NT == 0, "transform width must be a multiple of the block");
@@ -637,7 +642,6 @@ static __global__ void __launch_bounds__(1024, 1) add_rms_norm_fwht_f32(
     const int tid  = threadIdx.x;
     const int lane = tid % ggml_cuda_get_physical_warp_size();
     a   += row*N;
-    dst += row*N;
     if constexpr (has_add) {
         b   += row*N;
         sum += row*N;
@@ -677,57 +681,112 @@ static __global__ void __launch_bounds__(1024, 1) add_rms_norm_fwht_f32(
         reg[i] *= signs[col];
     }
 
-    ggml_cuda_fwht_block_butterfly<N, NT>(reg, s_fwht, tid, lane);
+    ggml_cuda_fwht_block_butterfly<N, NT, B>(reg, s_fwht, tid, lane);
 
+    if constexpr (!q8) {
+        float * dst = (float *) dst_ptr + row*N;
 #pragma unroll
-    for (int i = 0; i < NE; ++i) {
-        dst[i*NT + tid] = reg[i];
+        for (int i = 0; i < NE; ++i) {
+            dst[i*NT + tid] = reg[i];
+        }
+    } else {
+        static_assert(layout == GGML_CUDA_Q8_1_AOS || layout == GGML_CUDA_Q8_1_PQ2, "unsupported q8_1 layout");
+        char * ycol = (char *) dst_ptr + row*(N/QK8_1)*sizeof(block_q8_1);
+        const int iqs = lane % QK8_1;
+#pragma unroll
+        for (int i = 0; i < NE; ++i) {
+            const float xi = reg[i];
+            const int   kb = (i*NT + tid) / QK8_1;
+
+            float amax = fabsf(xi);
+            float bsum = xi;
+            amax = warp_reduce_max<QK8_1>(amax);
+            bsum = warp_reduce_sum<QK8_1>(bsum);
+
+            const float  d = amax / 127.0f;
+            const int8_t q = amax == 0.0f ? 0 : roundf(xi / d);
+
+            if constexpr (layout == GGML_CUDA_Q8_1_PQ2) {
+                const int e = iqs;
+                ((int8_t *) ycol)[kb*QK8_1 + (e / 16)*16 + (e % 4)*4 + (e % 16)/4] = q;
+                int isum = q;
+                isum = warp_reduce_sum<QK8_1>(isum);
+                if (iqs == 0) {
+                    ((half2 *) (ycol + N))[kb] = make_half2(__float2half(d), __short_as_half((short) isum));
+                }
+            } else {
+                block_q8_1 * y = (block_q8_1 *) ycol + kb;
+                y->qs[iqs] = q;
+                if (iqs == 0) {
+                    y->ds = make_half2(d, bsum);
+                }
+            }
+        }
     }
 }
 
-bool ggml_cuda_add_rms_norm_fwht_supported(const int ncols) {
-    return ncols == 1024 || ncols == 2048 || ncols == 4096;
+// ncols: the row width; blk: the Hadamard block width (the transform matrix is blk x blk, applied to each blk-element
+// segment of the row; blk == ncols for a full-row transform)
+bool ggml_cuda_add_rms_norm_fwht_supported(const int ncols, const int blk) {
+    return (ncols == 1024 || ncols == 2048 || ncols == 4096) &&
+           (blk == 512 || blk == 1024 || blk == 2048 || blk == 4096) && blk <= ncols;
 }
 
 void ggml_cuda_op_add_rms_norm_fwht_fused(
         ggml_backend_cuda_context & ctx, const ggml_tensor * add, const ggml_tensor * rms_norm,
-        const ggml_tensor * weight, const ggml_tensor * signs, ggml_tensor * normed, ggml_tensor * dst) {
+        const ggml_tensor * weight, const ggml_tensor * signs, ggml_tensor * normed, ggml_tensor * dst,
+        void * q8, ggml_cuda_q8_1_layout q8_layout) {
     // without an ADD the norm reads its own source
     const ggml_tensor * x = add ? add : rms_norm->src[0];
     const ggml_tensor * a = add ? add->src[0] : x;
     const ggml_tensor * b = add ? add->src[1] : nullptr;
     const int ncols = (int) x->ne[0];
-    GGML_ASSERT(ggml_cuda_add_rms_norm_fwht_supported(ncols));
+    const int blk   = (int) dst->src[0]->ne[0];
+    GGML_ASSERT(ggml_cuda_add_rms_norm_fwht_supported(ncols, blk));
     GGML_ASSERT(ggml_nelements(dst) == ggml_nelements(x));
 
     float eps;
     memcpy(&eps, rms_norm->op_params, sizeof(float));
     GGML_ASSERT(eps >= 0.0f);
 
-    // fwht_dispatch: scale = 1 / sqrtf(n)
-    const float fwht_scale = 1 / sqrtf(ncols);
+    // fwht_dispatch: scale = 1 / sqrtf(n), n the transform width
+    const float fwht_scale = 1 / sqrtf(blk);
     const int64_t nrows = ggml_nrows(x);
     cudaStream_t stream = ctx.stream();
     float * normed_d = normed ? (float *) normed->data : nullptr;
-#define ARF_CASE(NN) \
-    case NN: \
-        if (add) { \
-            add_rms_norm_fwht_f32<NN, true><<<(unsigned) nrows, 1024, 0, stream>>>( \
-                (const float *) a->data, (const float *) b->data, (const float *) weight->data, (const float *) signs->data, \
-                (float *) add->data, normed_d, (float *) dst->data, eps, fwht_scale); \
-        } else { \
-            add_rms_norm_fwht_f32<NN, false><<<(unsigned) nrows, 1024, 0, stream>>>( \
-                (const float *) a->data, nullptr, (const float *) weight->data, (const float *) signs->data, \
-                nullptr, normed_d, (float *) dst->data, eps, fwht_scale); \
-        } \
-        break;
-    switch (ncols) {
-        ARF_CASE(1024)
-        ARF_CASE(2048)
-        ARF_CASE(4096)
-        default: GGML_ABORT("unsupported width");
+    void * out = q8 ? q8 : dst->data;
+#define ARF_LAUNCH(NN, BB, ADD, Q8, L) \
+    add_rms_norm_fwht_f32<NN, BB, ADD, Q8, L><<<(unsigned) nrows, 1024, 0, stream>>>( \
+        (const float *) a->data, ADD ? (const float *) b->data : nullptr, (const float *) weight->data, \
+        (const float *) signs->data, ADD ? (float *) add->data : nullptr, normed_d, out, eps, fwht_scale)
+#define ARF_CASE_ADD(NN, BB, ADD) \
+    if (!q8) { \
+        ARF_LAUNCH(NN, BB, ADD, false, GGML_CUDA_Q8_1_AOS); \
+    } else if (q8_layout == GGML_CUDA_Q8_1_PQ2) { \
+        ARF_LAUNCH(NN, BB, ADD, true, GGML_CUDA_Q8_1_PQ2); \
+    } else { \
+        GGML_ASSERT(q8_layout == GGML_CUDA_Q8_1_AOS); \
+        ARF_LAUNCH(NN, BB, ADD, true, GGML_CUDA_Q8_1_AOS); \
     }
-#undef ARF_CASE
+#define ARF_CASE_B(NN, BB) \
+    if (blk == BB) { \
+        if (add) { \
+            ARF_CASE_ADD(NN, BB, true) \
+        } else { \
+            ARF_CASE_ADD(NN, BB, false) \
+        } \
+        return; \
+    }
+    switch (ncols) {
+        case 1024: ARF_CASE_B(1024, 512) ARF_CASE_B(1024, 1024) break;
+        case 2048: ARF_CASE_B(2048, 512) ARF_CASE_B(2048, 1024) ARF_CASE_B(2048, 2048) break;
+        case 4096: ARF_CASE_B(4096, 512) ARF_CASE_B(4096, 1024) ARF_CASE_B(4096, 2048) ARF_CASE_B(4096, 4096) break;
+        default: break;
+    }
+    GGML_ABORT("unsupported width %d / block %d", ncols, blk);
+#undef ARF_CASE_B
+#undef ARF_CASE_ADD
+#undef ARF_LAUNCH
 }
 
 void ggml_cuda_op_add_rms_norm_scale_fused(

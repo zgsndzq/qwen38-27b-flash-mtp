@@ -9,11 +9,12 @@ void ggml_cuda_op_rms_norm(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 void ggml_cuda_op_add_rms_norm_fused(
         ggml_backend_cuda_context & ctx, ggml_tensor * add, ggml_tensor * rms_norm, ggml_tensor * mul);
 
-bool ggml_cuda_add_rms_norm_fwht_supported(int ncols);
+bool ggml_cuda_add_rms_norm_fwht_supported(int ncols, int blk);
 
 void ggml_cuda_op_add_rms_norm_fwht_fused(
         ggml_backend_cuda_context & ctx, const ggml_tensor * add, const ggml_tensor * rms_norm,
-        const ggml_tensor * weight, const ggml_tensor * signs, ggml_tensor * normed, ggml_tensor * dst);
+        const ggml_tensor * weight, const ggml_tensor * signs, ggml_tensor * normed, ggml_tensor * dst,
+        void * q8 = nullptr, ggml_cuda_q8_1_layout q8_layout = GGML_CUDA_Q8_1_AOS); // q8: write q8_1 rows there instead of dst
 
 void ggml_cuda_op_add_rms_norm_scale_fused(
         ggml_backend_cuda_context & ctx, ggml_tensor * add, ggml_tensor * rms_norm, float * row_scale);

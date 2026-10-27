@@ -883,8 +883,10 @@ bool ggml_cuda_should_use_mmvf(enum ggml_type type, int cc, const int64_t * src0
 
 // Two independent mat-vecs that share src1 and the weight type, shape and strides, as one launch of the same kernel:
 // the second weight becomes channel 1 (its offset from the first is the channel stride, src1 is broadcast with channel
-// stride 0). Every row runs the same template instance with the same block size as a single launch would, so the
-// results are bit-identical. Returns false (nothing launched) when the pair does not qualify.
+// stride 0). With 1..MMVF_MAX_BATCH_SIZE src1 columns (decode and speculative verify widths) every row and column runs
+// the same template instance (ncols_dst = the column count) with the same block size as ggml_cuda_mul_mat_vec_f would
+// for either product alone, so the results are bit-identical. Returns false (nothing launched) when the pair does not
+// qualify.
 bool ggml_cuda_mul_mat_vec_f_pair(ggml_backend_cuda_context & ctx, ggml_tensor * dst0, ggml_tensor * dst1) {
     const ggml_tensor * a    = dst0->src[0];
     const ggml_tensor * b    = dst1->src[0];
@@ -892,9 +894,11 @@ bool ggml_cuda_mul_mat_vec_f_pair(ggml_backend_cuda_context & ctx, ggml_tensor *
     if (dst1->src[1] != src1 || a->type != b->type || !ggml_are_same_shape(a, b) || !ggml_are_same_stride(a, b) ||
             (a->type != GGML_TYPE_F32 && a->type != GGML_TYPE_F16 && a->type != GGML_TYPE_BF16) ||
             src1->type != GGML_TYPE_F32 || dst0->type != GGML_TYPE_F32 || dst1->type != GGML_TYPE_F32 ||
-            a->ne[2] != 1 || a->ne[3] != 1 || src1->ne[1] != 1 || src1->ne[2] != 1 || src1->ne[3] != 1 ||
-            src1->nb[0] != sizeof(float) || !ggml_are_same_shape(dst0, dst1) || !ggml_is_contiguous(dst0) ||
-            !ggml_is_contiguous(dst1) || dst0->ne[1] != 1 || dst0->ne[2] != 1 || dst0->ne[3] != 1 ||
+            a->ne[2] != 1 || a->ne[3] != 1 || src1->ne[1] < 1 || src1->ne[1] > MMVF_MAX_BATCH_SIZE ||
+            src1->ne[2] != 1 || src1->ne[3] != 1 || src1->nb[0] != sizeof(float) ||
+            src1->nb[1] % (2*sizeof(float)) != 0 ||
+            !ggml_are_same_shape(dst0, dst1) || !ggml_is_contiguous(dst0) || !ggml_is_contiguous(dst1) ||
+            dst0->ne[1] != src1->ne[1] || dst0->ne[2] != 1 || dst0->ne[3] != 1 ||
             a->nb[0] != ggml_type_size(a->type)) {
         return false;
     }
@@ -914,6 +918,7 @@ bool ggml_cuda_mul_mat_vec_f_pair(ggml_backend_cuda_context & ctx, ggml_tensor *
 
     const int64_t ne00 = a->ne[0];
     const int64_t ne01 = a->ne[1];
+    const int64_t ne11 = src1->ne[1];
     const int64_t s01  = a->nb[1] / ts;
     const int64_t s11  = src1->nb[1] / sizeof(float);
     const int64_t s1   = dst0->nb[1] / sizeof(float);
@@ -927,16 +932,17 @@ bool ggml_cuda_mul_mat_vec_f_pair(ggml_backend_cuda_context & ctx, ggml_tensor *
 
     switch (a->type) {
         case GGML_TYPE_F32:
-            mul_mat_vec_f_cuda((const float *) a->data, src1_d, nullptr, fusion, dst_d, ne00, ne01, 1, s01, s11, s1,
+            mul_mat_vec_f_cuda((const float *) a->data, src1_d, nullptr, fusion, dst_d, ne00, ne01, ne11, s01, s11, s1,
                 2, 2, 2, dx / (int64_t) ts, 0, dd / (int64_t) sizeof(float), 1, 1, s03, s13, s3, 0, prec, ctx.stream());
             break;
         case GGML_TYPE_F16:
-            mul_mat_vec_f_cuda((const half *) a->data, src1_d, nullptr, fusion, dst_d, ne00, ne01, 1, s01, s11, s1,
+            mul_mat_vec_f_cuda((const half *) a->data, src1_d, nullptr, fusion, dst_d, ne00, ne01, ne11, s01, s11, s1,
                 2, 2, 2, dx / (int64_t) ts, 0, dd / (int64_t) sizeof(float), 1, 1, s03, s13, s3, 0, prec, ctx.stream());
             break;
         case GGML_TYPE_BF16:
-            mul_mat_vec_f_cuda((const nv_bfloat16 *) a->data, src1_d, nullptr, fusion, dst_d, ne00, ne01, 1, s01, s11, s1,
-                2, 2, 2, dx / (int64_t) ts, 0, dd / (int64_t) sizeof(float), 1, 1, s03, s13, s3, 0, prec, ctx.stream());
+            mul_mat_vec_f_cuda((const nv_bfloat16 *) a->data, src1_d, nullptr, fusion, dst_d, ne00, ne01, ne11, s01,
+                s11, s1, 2, 2, 2, dx / (int64_t) ts, 0, dd / (int64_t) sizeof(float), 1, 1, s03, s13, s3, 0, prec,
+                ctx.stream());
             break;
         default:
             return false;

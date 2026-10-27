@@ -29,6 +29,7 @@
 #include <cstdio>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -1300,6 +1301,18 @@ int ggml_cuda_get_device();
 // Lives here, after ggml_cuda_info(), because the body reads the current device's cc.
 // PQ2_0 multi-column mat-vec (mmvq-pq2_0.cuh): Ada only, plain 2D (no ids, no batch dims), 3-8 columns.
 // Batch invariance keeps the generic kernel.
+// Smallest column count sent to the PQ2_0 multi-column kernel. On Hopper that includes the 1- and 2-column mat-vecs of
+// plain decode (with the bias / gate+GLU fusion in its epilogue): it needs no per-weight decode and reaches 2.3-2.9 TB/s
+// on the larger projections where the generic tall-row path stops at 1.7-2.2. Elsewhere it starts at 3 columns (not
+// measured below that). GGML_CUDA_PQ2_MC_MIN overrides it.
+static inline int ggml_cuda_pq2_mc_min(int cc) {
+    static const int env = getenv("GGML_CUDA_PQ2_MC_MIN") ? atoi(getenv("GGML_CUDA_PQ2_MC_MIN")) : 0;
+    if (env > 0) {
+        return env;
+    }
+    return cc == GGML_CUDA_CC_HOPPER ? 1 : 3;
+}
+
 static inline bool ggml_cuda_pq2_multicol(int ncols_dst) {
 #if defined(GGML_USE_HIP)
     GGML_UNUSED(ncols_dst);
@@ -1605,6 +1618,21 @@ struct ggml_cuda_gdn_gather_context {
     }
 };
 
+// GDN decode conv chain fused into one launch (on by default, GGML_CUDA_GDN_FUSION=0 disables it): the conv-state
+// GET_ROWS is skipped and registered under the CONCAT it feeds; the CONCAT launches the fused kernel, which also
+// computes the conv-state CPY, SSM_CONV + SILU and the q/k L2_NORM, and those nodes are marked done. Keyed by node
+// identity, valid for one graph evaluation, owned by the evaluating context (reset with the other per-evaluation
+// registries).
+struct ggml_cuda_gdn_conv_context {
+    std::unordered_map<const ggml_tensor *, const ggml_tensor *> gathers; // CONCAT -> the GET_ROWS it replaces
+    std::unordered_set<const ggml_tensor *>                      done;    // nodes computed by a fused launch
+
+    void reset() {
+        gathers.clear();
+        done.clear();
+    }
+};
+
 // A Hadamard transform (MUL_MAT with GGML_HINT_SRC0_IS_HADAMARD, optionally preceded by the sign
 // flip) whose only consumers are PTQ1_0 mat-vecs writes the q8_1-quantized activation into its own
 // output buffer instead of the F32 result (the quantized rows are 9/8 bytes per element, so they
@@ -1625,6 +1653,9 @@ struct ggml_cuda_fwht_q8 {
 struct ggml_cuda_fwht_q8_context {
     std::unordered_map<const ggml_tensor *, ggml_cuda_fwht_q8> entries;
     std::vector<std::unique_ptr<ggml_cuda_pool_alloc<char>>> held; // released at reset(), newest first (VMM pool is LIFO)
+    // nodes a fusion already computed ahead of their position in the graph (ggml_cuda_try_fuse look-ahead);
+    // the evaluation loop skips them
+    std::unordered_set<const ggml_tensor *> precomputed;
 
     // the implicit destructor would release `held` oldest first, which the VMM pool asserts on. The
     // owning context also calls reset() before its pools go away (this member is declared before them).
@@ -1634,6 +1665,7 @@ struct ggml_cuda_fwht_q8_context {
 
     void reset() {
         entries.clear();
+        precomputed.clear();
         while (!held.empty()) {
             held.pop_back();
         }
@@ -1727,6 +1759,7 @@ struct ggml_backend_cuda_context {
     ggml_cuda_stream_context concurrent_stream_context;
     ggml_cuda_gdn_gather_context gdn_gather_context;
     ggml_cuda_fwht_q8_context    fwht_q8_context;
+    ggml_cuda_gdn_conv_context   gdn_conv_context;
 
     // GGML_CUDA_FA_CHUNK (fattn.cu): set while one KV chunk of a chunked attention op runs; read by launch_fattn
     const ggml_cuda_fattn_chunk * fattn_chunk = nullptr;
@@ -1748,6 +1781,8 @@ struct ggml_backend_cuda_context {
     ggml_cuda_gdn_gather_context & gdn_gathers() { return gdn_gather_context; }
 
     ggml_cuda_fwht_q8_context & fwht_q8() { return fwht_q8_context; }
+
+    ggml_cuda_gdn_conv_context & gdn_conv() { return gdn_conv_context; }
 
     cublasHandle_t cublas_handle() {
         if (cublas_handles[device][curr_stream_no] == nullptr) {
