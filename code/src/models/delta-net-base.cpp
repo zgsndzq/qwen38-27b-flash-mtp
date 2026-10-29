@@ -555,6 +555,46 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
 
     GGML_ASSERT(state_rows == nullptr || keep); // rows mode is a ring-path optimization
 
+    if (inp->s_pinfo) {
+        // replay rollback (llama_memory_recurrent::p_l, ggml_gated_delta_net_replay): the GDN kernel runs this cell's
+        // pending tokens (the inputs of its last P tokens, without the rejected ones) before the batch, writes the
+        // state P tokens before the end to its output (the CUDA cache fusion writes it straight into the S plane:
+        // the first copy below) and the inputs of the last P tokens after it (the second copy, into p_l).
+        const bool raw = gdn_raw_beta && gdn_raw_alpha && gdn_raw_dt_bias && gdn_raw_a;
+        GGML_ASSERT(raw && state_rows == nullptr && "replay rollback needs the fused GDN op with raw gates");
+
+        const int64_t P     = mctx_cur->get_n_pend();
+        const int64_t D     = S_v * S_v * H_v;
+        ggml_tensor * p_all = mctx_cur->get_p_l(il);
+        GGML_ASSERT(p_all && p_all->ne[0] == P * (k->ne[0] * k->ne[1] + S_v * H_v + 2 * H_v) + 1);
+
+        ggml_tensor * gdn_out = ggml_gated_delta_net_replay(ctx0, q, k, v, gdn_raw_alpha, gdn_raw_beta, s, p_all,
+                                                            inp->s_pinfo, (int) P);
+        ggml_gated_delta_net_set_raw_gates(gdn_out, gdn_raw_dt_bias, gdn_raw_a);
+        res->add_fused_node({n_seq_tokens > 1 ? LLM_FUSED_OP_GDN_CH : LLM_FUSED_OP_GDN_AR, gdn_out, il});
+
+        ggml_tensor * output = ggml_view_4d(ctx0, gdn_out,
+            S_v, H_v, n_seq_tokens, n_seqs,
+            ggml_row_size(gdn_out->type, S_v),
+            ggml_row_size(gdn_out->type, S_v * H_v),
+            ggml_row_size(gdn_out->type, S_v * H_v * n_seq_tokens),
+            0);
+        cb(output, "attn_output", il);
+
+        const int64_t attn_elems = S_v * H_v * n_seq_tokens * n_seqs;
+        ggml_tensor * s_commit = ggml_view_2d(ctx0, gdn_out, D, n_seqs, ggml_row_size(gdn_out->type, D),
+            ggml_row_size(gdn_out->type, attn_elems));
+        ggml_build_forward_expand(gf, ggml_cpy(ctx0, s_commit,
+            ggml_view_2d(ctx0, ssm_states_all, D, n_seqs, ssm_states_all->nb[1], kv_head * ssm_states_all->nb[1])));
+
+        ggml_tensor * p_new = ggml_view_2d(ctx0, gdn_out, p_all->ne[0], n_seqs, ggml_row_size(gdn_out->type, p_all->ne[0]),
+            ggml_row_size(gdn_out->type, attn_elems + D * n_seqs));
+        ggml_build_forward_expand(gf, ggml_cpy(ctx0, p_new,
+            ggml_view_2d(ctx0, p_all, p_all->ne[0], n_seqs, p_all->nb[1], kv_head * p_all->nb[1])));
+
+        return output;
+    }
+
     if (!keep) {
         auto attn_out = build_delta_net(q, k, v, g, b, s, il);
         ggml_tensor * output    = attn_out.first;

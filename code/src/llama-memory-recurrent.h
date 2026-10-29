@@ -112,6 +112,17 @@ public:
     std::vector<ggml_tensor *> r_l;
     std::vector<ggml_tensor *> s_l;
 
+    // replay rollback (LLAMA_RS_REPLAY=1, qwen35 GDN layers with raw gates): S keeps one plane, and p_l keeps the GDN
+    // inputs of the last n_rs_seq tokens of each cell (row = n_rs_seq tokens of [k | v | gate | beta], then the count
+    // of valid ones). The GDN kernel runs the valid ones that were not rejected before the batch
+    // (ggml_gated_delta_net_replay). The conv state (r_l) keeps its snapshot planes.
+    bool     replay = false;
+    uint32_t pend_k = 0; // k floats per token (ssm_d_state * ssm_n_group)
+    uint32_t pend_v = 0; // v floats per token (ssm_d_inner)
+    uint32_t pend_h = 0; // gate floats per token = beta floats per token (ssm_dt_rank)
+    uint32_t pend_tok() const { return pend_k + pend_v + 2*pend_h; }
+    std::vector<ggml_tensor *> p_l;
+
 private:
     //const llama_model & model;
     const llama_hparams & hparams;
@@ -125,9 +136,12 @@ private:
 
     size_t size_r_bytes() const;
     size_t size_s_bytes() const;
+    size_t size_p_bytes() const;
 
     void state_write_meta(llama_io_write_i & io, const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges, llama_seq_id seq_id = -1) const;
-    void state_write_data(llama_io_write_i & io, const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges) const;
+    void state_write_data(llama_io_write_i & io, const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges,
+                          const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges_s = {},
+                          const std::vector<uint32_t> & cell_masks = {}) const;
 
     bool state_read_meta(llama_io_read_i & io, uint32_t cell_count, llama_seq_id dest_seq_id = -1);
     bool state_read_data(llama_io_read_i & io, uint32_t cell_count);
@@ -170,8 +184,17 @@ public:
 
     ggml_tensor * get_r_l(int32_t il) const;
     ggml_tensor * get_s_l(int32_t il) const;
+    ggml_tensor * get_p_l(int32_t il) const;
 
     int32_t s_copy(int i) const;
+
+    // replay rollback
+    bool     get_replay() const;
+    uint32_t get_n_pend() const;
+    int32_t  s_copy0(int i) const;      // the cell's S row (plane 0), without consuming the rollback index
+    // main row i: its pending row (plane 0), the rejected count (the pending rollback), fresh (a new state);
+    // call before s_copy(i), which consumes the rollback index
+    void     s_pend_info(int i, int32_t & row, int32_t & rejected, int32_t & fresh) const;
 
 private:
     const llama_memory_status status;

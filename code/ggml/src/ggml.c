@@ -6433,6 +6433,59 @@ struct ggml_tensor * ggml_gated_delta_net_rows(
     return result;
 }
 
+struct ggml_tensor * ggml_gated_delta_net_replay(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * q,
+        struct ggml_tensor  * k,
+        struct ggml_tensor  * v,
+        struct ggml_tensor  * g,
+        struct ggml_tensor  * beta,
+        struct ggml_tensor  * state,
+        struct ggml_tensor  * pend,
+        struct ggml_tensor  * info,
+        int                   n_pend) {
+    GGML_ASSERT(ggml_is_contiguous_rows(q));
+    GGML_ASSERT(ggml_is_contiguous_rows(k));
+    GGML_ASSERT(ggml_is_contiguous_rows(v));
+    GGML_ASSERT(ggml_is_contiguous(g));
+    GGML_ASSERT(ggml_is_contiguous(beta));
+    GGML_ASSERT(ggml_is_contiguous(state));
+    GGML_ASSERT(q->type == GGML_TYPE_F32 && k->type == GGML_TYPE_F32 && v->type == GGML_TYPE_F32);
+    GGML_ASSERT(g->type == GGML_TYPE_F32 && beta->type == GGML_TYPE_F32 && state->type == GGML_TYPE_F32);
+
+    const int64_t S_v      = v->ne[0];
+    const int64_t H        = v->ne[1];
+    const int64_t n_tokens = v->ne[2];
+    const int64_t n_seqs   = v->ne[3];
+
+    GGML_ASSERT(g->ne[0] == 1 && beta->ne[0] == 1); // scalar gates (the pending skip needs the raw-gate form)
+    GGML_ASSERT(state->ne[0] == S_v && state->ne[1] == S_v && state->ne[2] == H && state->ne[3] == n_seqs);
+    GGML_ASSERT(n_pend >= 1);
+    GGML_ASSERT(pend->type == GGML_TYPE_F32 && pend->nb[0] == sizeof(float));
+    GGML_ASSERT(pend->ne[0] == (int64_t) n_pend * (k->ne[0] * k->ne[1] + S_v * H + 2 * H) + 1);
+    GGML_ASSERT(info->type == GGML_TYPE_I32 && ggml_is_contiguous(info) && ggml_nelements(info) == 3 * n_seqs);
+
+    const int64_t row_w      = S_v * H;
+    const int64_t pend_rows  = (pend->ne[0] * n_seqs + row_w - 1) / row_w;
+    const int64_t ne[4] = { row_w, n_tokens * n_seqs + S_v * n_seqs + pend_rows, 1, 1 };
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
+
+    ggml_set_op_params_i32(result, 0, 1);       // K: one state slot (the commit point)
+    ggml_set_op_params_i32(result, 2, n_pend);  // replay
+
+    result->op     = GGML_OP_GATED_DELTA_NET;
+    result->src[0] = q;
+    result->src[1] = k;
+    result->src[2] = v;
+    result->src[3] = g;
+    result->src[4] = beta;
+    result->src[5] = state;
+    result->src[6] = info;
+    result->src[9] = pend;
+
+    return result;
+}
+
 void ggml_gated_delta_net_set_raw_gates(
         struct ggml_tensor  * gdn,
         struct ggml_tensor  * dt_bias,

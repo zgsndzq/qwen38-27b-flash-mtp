@@ -3213,6 +3213,21 @@ private:
             auto & draft = slot.spec_draft;
             auto & ckpt  = slot.spec_ckpt;
 
+            // a draft stops at its first end-of-generation token. Without this, an n-gram draft continues past the end
+            // of the answer (the history makes "<|im_end|>\n<|im_start|>..." easy to predict), the target accepts those
+            // tokens and reads them into the slot, and the next turn of the conversation, which differs there, cannot
+            // reuse the state after the answer (it falls back to a context checkpoint; a saved state is not a prefix)
+            for (size_t i = 0; i < draft.size(); ++i) {
+                if (llama_vocab_is_eog(vocab, draft[i])) {
+                    draft.resize(i + 1);
+                    // the candidates are one row per drafted token: cut them with the draft or the accept sees stale rows
+                    if (!slot.spec_draft_q.empty()) {
+                        slot.spec_draft_q.resize(i + 1);
+                    }
+                    break;
+                }
+            }
+
             slot.stats.n_draft_tokens += draft.size();
 
             // TODO: avoid restoring the draft context and re-evaluating the drafted tokens when not needed [TAG_SPEC_AVOID_DRAFT_REEVAL]
@@ -4167,13 +4182,19 @@ private:
                 common_sampler_ptr smpl_save(common_sampler_clone(slot.smpl.get()));
 
                 GGML_ASSERT(slot.spec_i_batch.size() == n_draft + 1);
-                GGML_ASSERT(slot.spec_draft_q.empty() || (slot.spec_draft_q.size() == slot.spec_draft.size()));
+                if (!slot.spec_draft_q.empty() && slot.spec_draft_q.size() != slot.spec_draft.size()) {
+                    // one candidate row per draft token, kept in step by every draft edit; a stale row set would abort the
+                    // slot mid-generation, and verifying without the candidates is still correct (slower on this round)
+                    SLT_WRN(slot, "spec candidates %zu vs draft %zu, dropping them\n",
+                            slot.spec_draft_q.size(), slot.spec_draft.size());
+                    slot.spec_draft_q.clear();
+                }
 
                 // drafters that fill no distribution leave spec_draft_q empty and fall back to sample-and-match
                 const bool use_rejection = slot.use_spec_rejection() && !slot.spec_draft_q.empty();
 
                 std::vector<llama_token> accepted;
-                if (slot.spec_is_replay && use_rejection) {
+                if (slot.spec_is_replay) {
                     // the draft was already accepted before a checkpoint restore - re-accept it rather than
                     // verify again, which would draw from the rng a second time
                     accepted = server_accept_replay(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft);
@@ -4202,6 +4223,8 @@ private:
                         // partial acceptance is not supported by the context -> truncate the draft and restore the state
                         slot.spec_is_replay = true;
                         slot.spec_draft = std::move(accepted);
+                        // the candidates belong to the old draft, and a replay re-accepts the tokens instead of verifying
+                        slot.spec_draft_q.clear();
 
                         const auto & ckpt = slot.spec_ckpt;
 

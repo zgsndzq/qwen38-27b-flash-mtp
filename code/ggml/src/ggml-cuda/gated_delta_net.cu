@@ -45,6 +45,22 @@ static __global__ void gdn_activate_raw_gates(const float * g, const float * bet
     }
 }
 
+// Replay rollback (ggml_gated_delta_net_replay): the pending tokens of each sequence (the inputs of its last P tokens)
+// run first, then the batch; a pending token marked rejected is skipped. The state after the commit point (P tokens
+// before the end of the combined run) goes to `state`, and the inputs of the last P combined tokens go to p_out.
+// mode 0: none (the legacy op); 1: commit point + new pending; 2: pending tokens only, final state to `state`.
+struct gdn_replay_args {
+    const float *   p_in         = nullptr; // pending rows (P tokens [k | v | g | beta] + a valid count), nullptr: none
+    const int32_t * p_info       = nullptr; // [3 * n_seqs]: pending row, rejected count, fresh
+    float *         p_out        = nullptr; // new pending rows, one per sequence (nullptr: none)
+    int64_t         p_row_stride = 0;       // floats per pending row
+    int             P            = 0;
+    int             p_tok        = 0;       // floats per pending token
+    int             n_kf         = 0;       // k floats per token (S_k * H_k)
+    int             n_vf         = 0;       // v floats per token (S_v * H)
+    int             mode         = 0;
+};
+
 // RAW: beta and g arrive pre-activation (ggml_gated_delta_net_set_raw_gates); the kernel applies
 // sigmoid(beta) and raw_a[h] * softplus(g + raw_dt_bias[h]) with the unary kernels' formulas.
 // G_PRECOMPUTED: g already holds exp(g) (GB10 long-prompt path); only used with RAW == false.
@@ -78,7 +94,8 @@ gated_delta_net_cuda(const float * q,
                                      int64_t       state_slot_stride,
                                      int           K,
                                      const int32_t * s_ids,
-                                     int64_t       s_row_stride) {
+                                     int64_t       s_row_stride,
+                                     const gdn_replay_args rp) {
     const uint32_t h_idx    = blockIdx.x;
     const uint32_t sequence = blockIdx.y;
     // Each warp owns one or more columns, using warp-level primitives to reduce across rows.
@@ -124,14 +141,58 @@ gated_delta_net_cuda(const float * q,
         }
     }
 
-    for (int t = 0; t < n_tokens; t++) {
-        const float * q_t = q + iq3 * sq3 + t * sq2 + iq1 * sq1;
-        const float * k_t = k + iq3 * sq3 + t * sq2 + iq1 * sq1;
-        const float * v_t = v + sequence * sv3 + t * sv2 + h_idx * sv1;
+    // replay: cv valid pending tokens run before the batch (raw scalar gates only)
+    int           cv   = 0;
+    const float * prow = nullptr;
+    if constexpr (RAW && !KDA) {
+        if (rp.p_in != nullptr) {
+            const int row   = rp.p_info[sequence];
+            const int rej   = rp.p_info[n_seqs + sequence];
+            const int fresh = rp.p_info[2 * n_seqs + sequence];
+            prow = rp.p_in + (int64_t) row * rp.p_row_stride;
+            cv   = fresh ? 0 : max(0, (int) prow[(int64_t) rp.P * rp.p_tok] - rej);
+        }
+    }
+    const int L      = cv + (int) n_tokens;
+    const int c_new  = rp.p_out != nullptr ? min(L, rp.P) : 0;
+    const int commit = rp.mode == 1 ? L - c_new : -1;   // the state after this many combined tokens goes to `state`
+    float *   p_dst  = rp.p_out != nullptr ? rp.p_out + (int64_t) sequence * rp.p_row_stride : nullptr;
 
-        const int64_t gb_offset = sequence * sb3 + t * sb2 + h_idx * sb1;
-        const float * beta_t = beta + gb_offset;
-        const float * g_t    = g    + gb_offset * (KDA ? S_v : 1);
+    if (commit == 0) {
+#pragma unroll
+        for (int c = 0; c < cols_per_warp; ++c) {
+#pragma unroll
+            for (int r = 0; r < rows_per_lane; r++) {
+                state[(col + c) * S_v + r * warp_size + lane] = s_shard[c][r];
+            }
+        }
+    }
+
+    for (int ci = 0; ci < L; ci++) {
+        const bool pend = ci < cv;   // a pending token: no output
+        const int  t    = ci - cv;   // batch token index
+
+        const float * q_t;
+        const float * k_t;
+        const float * v_t;
+        const float * beta_t;
+        const float * g_t;
+        if (pend) {
+            const float * pt = prow + (int64_t) ci * rp.p_tok;
+            k_t    = pt + iq1 * S_v;
+            q_t    = k_t;   // the output of a pending token is not used
+            v_t    = pt + rp.n_kf + h_idx * S_v;
+            g_t    = pt + rp.n_kf + rp.n_vf + h_idx;
+            beta_t = pt + rp.n_kf + rp.n_vf + H + h_idx;
+        } else {
+            q_t = q + iq3 * sq3 + t * sq2 + iq1 * sq1;
+            k_t = k + iq3 * sq3 + t * sq2 + iq1 * sq1;
+            v_t = v + sequence * sv3 + t * sv2 + h_idx * sv1;
+
+            const int64_t gb_offset = sequence * sb3 + t * sb2 + h_idx * sb1;
+            beta_t = beta + gb_offset;
+            g_t    = g    + gb_offset * (KDA ? S_v : 1);
+        }
 
         float beta_val = *beta_t;
         if constexpr (RAW) {
@@ -178,7 +239,7 @@ gated_delta_net_cuda(const float * q,
 
                 float attn_col = warp_reduce_sum<warp_size>(attn_partial);
 
-                if (lane == 0) {
+                if (lane == 0 && !pend) {
                     attn_data[col + c] = attn_col * scale;
                 }
             }
@@ -208,18 +269,20 @@ gated_delta_net_cuda(const float * q,
 
             float attn_col = warp_reduce_sum<warp_size>(attn_partial);
 
-            if (lane == 0) {
+            if (lane == 0 && !pend) {
                 attn_data[col] = attn_col * scale;
             }
         }
 
-        attn_data += S_v * H;
+        if (!pend) {
+            attn_data += S_v * H;
+        }
 
         if constexpr (keep_rs_t) {
             // snapshot slot mapping: slot 0 = most recent state, slot s = s tokens back.
             // When n_tokens < K only slots 0..n_tokens-1 are written; older slots are caller-owned.
             const int target_slot = (int) n_tokens - 1 - t;
-            if (target_slot >= 0 && target_slot < K) {
+            if (!pend && target_slot >= 0 && target_slot < K) {
                 float * curr_state = state + target_slot * state_slot_stride;
 #pragma unroll
                 for (int c = 0; c < cols_per_warp; ++c) {
@@ -232,15 +295,73 @@ gated_delta_net_cuda(const float * q,
             }
         }
 
+        if (ci + 1 == commit) {
+#pragma unroll
+            for (int c = 0; c < cols_per_warp; ++c) {
+#pragma unroll
+                for (int r = 0; r < rows_per_lane; r++) {
+                    state[(col + c) * S_v + r * warp_size + lane] = s_shard[c][r];
+                }
+            }
+        }
+
+        if (p_dst != nullptr && ci >= commit) {
+            // this token's inputs become pending slot ci - commit: k once per k head, v per owned column, gates once
+            float * pt = p_dst + (int64_t) (ci - commit) * rp.p_tok;
+            if (h_idx == iq1 && blockIdx.z == 0 && threadIdx.y == 0) {
+#pragma unroll
+                for (int r = 0; r < rows_per_lane; r++) {
+                    pt[iq1 * S_v + r * warp_size + lane] = k_reg[r];
+                }
+            }
+            if (lane == 0) {
+#pragma unroll
+                for (int c = 0; c < cols_per_warp; ++c) {
+                    pt[rp.n_kf + h_idx * S_v + col + c] = v_t[col + c];
+                }
+            }
+            if (blockIdx.z == 0 && threadIdx.y == 0 && lane == 0) {
+                pt[rp.n_kf + rp.n_vf + h_idx]     = *g_t;
+                pt[rp.n_kf + rp.n_vf + H + h_idx] = *beta_t;
+            }
+        }
+    }
+
+    if (p_dst != nullptr) {
+        // unused slots (fewer than P combined tokens): zeros, so saved rows do not depend on old memory
+        for (int sl = c_new; sl < rp.P; ++sl) {
+            float * pt = p_dst + (int64_t) sl * rp.p_tok;
+            if (h_idx == iq1 && blockIdx.z == 0 && threadIdx.y == 0) {
+#pragma unroll
+                for (int r = 0; r < rows_per_lane; r++) {
+                    pt[iq1 * S_v + r * warp_size + lane] = 0.0f;
+                }
+            }
+            if (lane == 0) {
+#pragma unroll
+                for (int c = 0; c < cols_per_warp; ++c) {
+                    pt[rp.n_kf + h_idx * S_v + col + c] = 0.0f;
+                }
+            }
+            if (blockIdx.z == 0 && threadIdx.y == 0 && lane == 0) {
+                pt[rp.n_kf + rp.n_vf + h_idx]     = 0.0f;
+                pt[rp.n_kf + rp.n_vf + H + h_idx] = 0.0f;
+            }
+        }
+        if (h_idx == 0 && blockIdx.z == 0 && threadIdx.y == 0 && lane == 0) {
+            p_dst[(int64_t) rp.P * rp.p_tok] = (float) c_new;
+        }
     }
 
     if constexpr (!keep_rs_t) {
+        if (commit < 0) {
 #pragma unroll
-        for (int c = 0; c < cols_per_warp; ++c) {
+            for (int c = 0; c < cols_per_warp; ++c) {
 #pragma unroll
-            for (int r = 0; r < rows_per_lane; r++) {
-                const int i = r * warp_size + lane;
-                state[(col + c) * S_v + i] = s_shard[c][r];
+                for (int r = 0; r < rows_per_lane; r++) {
+                    const int i = r * warp_size + lane;
+                    state[(col + c) * S_v + i] = s_shard[c][r];
+                }
             }
         }
     }
@@ -257,7 +378,7 @@ static void launch_gated_delta_net(
         int64_t sb1,   int64_t sb2, int64_t sb3,
         int64_t neqk1, int64_t rq3,
         float scale, int64_t state_slot_stride, int K,
-        const int32_t * s_ids, int64_t s_row_stride, cudaStream_t stream) {
+        const int32_t * s_ids, int64_t s_row_stride, cudaStream_t stream, const gdn_replay_args & rp = gdn_replay_args()) {
     //TODO: Add chunked kernel for even faster pre-fill
     const int warp_size = ggml_cuda_info().devices[ggml_cuda_get_device()].warp_size;
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
@@ -276,19 +397,19 @@ static void launch_gated_delta_net(
             ggml_cuda_kernel_launch(gated_delta_net_cuda<16, KDA, keep_rs_t, RAW, G_PRECOMPUTED>, launch_params,
                 q_d, k_d, v_d, g_d, b_d, rb_d, ra_d, s_d, dst_d, state_d, H,
                 n_tokens, n_seqs, sq1, sq2, sq3, sv1, sv2, sv3,
-                sb1, sb2, sb3, neqk1_magic, rq3_magic, scale, state_slot_stride, K, s_ids, s_row_stride);
+                sb1, sb2, sb3, neqk1_magic, rq3_magic, scale, state_slot_stride, K, s_ids, s_row_stride, rp);
             break;
         case 32:
             ggml_cuda_kernel_launch(gated_delta_net_cuda<32, KDA, keep_rs_t, RAW, G_PRECOMPUTED>, launch_params,
                 q_d, k_d, v_d, g_d, b_d, rb_d, ra_d, s_d, dst_d, state_d, H,
                 n_tokens, n_seqs, sq1, sq2, sq3, sv1, sv2, sv3,
-                sb1, sb2, sb3, neqk1_magic, rq3_magic, scale, state_slot_stride, K, s_ids, s_row_stride);
+                sb1, sb2, sb3, neqk1_magic, rq3_magic, scale, state_slot_stride, K, s_ids, s_row_stride, rp);
             break;
         case 64: {
             ggml_cuda_kernel_launch(gated_delta_net_cuda<64, KDA, keep_rs_t, RAW, G_PRECOMPUTED>, launch_params,
                 q_d, k_d, v_d, g_d, b_d, rb_d, ra_d, s_d, dst_d, state_d, H,
                 n_tokens, n_seqs, sq1, sq2, sq3, sv1, sv2, sv3,
-                sb1, sb2, sb3, neqk1_magic, rq3_magic, scale, state_slot_stride, K, s_ids, s_row_stride);
+                sb1, sb2, sb3, neqk1_magic, rq3_magic, scale, state_slot_stride, K, s_ids, s_row_stride, rp);
             break;
         }
         case 128: {
@@ -311,7 +432,7 @@ static void launch_gated_delta_net(
             ggml_cuda_kernel_launch(gated_delta_net_cuda<128, KDA, keep_rs_t, RAW, G_PRECOMPUTED>, launch_params,
                 q_d, k_d, v_d, g_d, b_d, rb_d, ra_d, s_d, dst_d, state_d, H,
                 n_tokens, n_seqs, sq1, sq2, sq3, sv1, sv2, sv3,
-                sb1, sb2, sb3, neqk1_magic, rq3_magic, scale, state_slot_stride, K, s_ids, s_row_stride);
+                sb1, sb2, sb3, neqk1_magic, rq3_magic, scale, state_slot_stride, K, s_ids, s_row_stride, rp);
             break;
         }
         default:
@@ -448,13 +569,78 @@ static void ggml_cuda_op_gated_delta_net_impl(
     const float * ra_d = raw ? (const float *) dst->src[8]->data : nullptr;
     GGML_ASSERT(!(raw && kda)); // raw gates are defined for the scalar gate only
 
+    // ours: on by default (GGML_CUDA_GDN_MMA=0 disables), which also arms the MMA fast path of the replay op below.
+    // Hoisted here from the chunked-prefill block below so both paths read one flag.
+    static const bool mma_off = getenv("GGML_CUDA_GDN_MMA") != nullptr && atoi(getenv("GGML_CUDA_GDN_MMA")) == 0;
+
+    // replay rollback (ggml_gated_delta_net_replay): pending tokens first, the commit-point state to state_d, the new
+    // pending rows after it in dst. With the chunked prefill: the pending tokens run alone first (per-token kernel), the
+    // MMA kernel takes the batch up to its last P + 1 tokens (the boundaries of the snapshot form with K = P + 1, so the
+    // results are the same), and the per-token kernel finishes the last P + 1 with the commit point and pending out.
+    const int n_pend = ggml_get_op_params_i32(dst, 2);
+    if (n_pend > 0) {
+        GGML_ASSERT(raw && !kda && !keep_rs && S_v == neq0);
+        const ggml_tensor * src_p = dst->src[9];
+        const ggml_tensor * src_i = dst->src[6];
+        gdn_replay_args rp;
+        rp.p_in         = (const float *) src_p->data;
+        rp.p_info       = (const int32_t *) src_i->data;
+        rp.p_row_stride = (int64_t) (src_p->nb[1] / sizeof(float));
+        rp.P            = n_pend;
+        rp.n_kf         = (int) (S_v * neqk1);
+        rp.n_vf         = (int) (S_v * H);
+        rp.p_tok        = rp.n_kf + rp.n_vf + 2 * (int) H;
+        GGML_ASSERT(src_p->ne[0] == (int64_t) rp.P * rp.p_tok + 1 && rp.p_row_stride == src_p->ne[0]);
+        rp.p_out        = dst_d + S_v * H * n_tokens * n_seqs + S_v * S_v * H * n_seqs;
+        rp.mode         = 1;
+
+        const int64_t n_mma_r = n_seqs == 1 ? n_tokens - (rp.P + 1) : 0;
+        if (!mma_off && n_mma_r >= 64 && ggml_cuda_gdn_mma_device_supported(ctx.device)) {
+            ggml_cuda_pool_alloc<float> s_rep(ctx.pool(), S_v * S_v * H * n_seqs);
+            ggml_cuda_pool_alloc<float> s_mid(ctx.pool(), S_v * S_v * H * n_seqs);
+            ggml_cuda_pool_alloc<float> g_act(ctx.pool());
+            ggml_cuda_pool_alloc<float> b_act(ctx.pool());
+            gdn_replay_args rp_pend = rp;   // pending tokens only, final state to s_rep
+            rp_pend.p_out = nullptr;
+            rp_pend.mode  = 2;
+            launch_gated_delta_net<false, false, true, false>(q_d, k_d, v_d, g_d, b_d, rb_d, ra_d, s_d, dst_d, s_rep.ptr,
+                S_v, H, 0, n_seqs, sq1, sq2, sq3, sv1, sv2, sv3, sb1, sb2, sb3, neqk1, rq3, scale, 0, 1,
+                s_ids, s_row_stride, stream, rp_pend);
+
+            ggml_cuda_gdn_mma_args args = ggml_cuda_gdn_mma_args_from_tensor(dst);
+            args.eligible  = src_g->ne[0] == 1 && S_v == 128 && neq0 == 128;
+            args.n_tokens  = n_mma_r;
+            args.state     = s_rep.ptr;
+            args.state_out = s_mid.ptr;
+            const int64_t n_gb = ggml_nelements(src_g);
+            g_act.alloc(n_gb);
+            b_act.alloc(n_gb);
+            gdn_activate_raw_gates<<<(unsigned) std::min<int64_t>((n_gb + 255)/256, 4096), 256, 0, stream>>>(
+                g_d, b_d, rb_d, ra_d, g_act.ptr, b_act.ptr, n_gb, H);
+            args.g    = g_act.ptr;
+            args.beta = b_act.ptr;
+            if (ggml_cuda_gdn_mma_launch(ctx.device, args, stream)) {
+                const int64_t t0 = n_mma_r;
+                gdn_replay_args rp_tail = rp;   // no pending phase (it ran first), commit point + new pending
+                rp_tail.p_in = nullptr;
+                launch_gated_delta_net<false, false, true, false>(q_d + t0 * sq2, k_d + t0 * sq2, v_d + t0 * sv2,
+                    g_d + t0 * sb2, b_d + t0 * sb2, rb_d, ra_d, s_mid.ptr, dst_d + t0 * S_v * H, state_d,
+                    S_v, H, rp.P + 1, n_seqs, sq1, sq2, sq3, sv1, sv2, sv3, sb1, sb2, sb3, neqk1, rq3, scale, 0, 1,
+                    nullptr, 0, stream, rp_tail);
+                return;
+            }
+        }
+        launch_gated_delta_net<false, false, true, false>(q_d, k_d, v_d, g_d, b_d, rb_d, ra_d, s_d, dst_d, state_d,
+            S_v, H, n_tokens, n_seqs, sq1, sq2, sq3, sv1, sv2, sv3, sb1, sb2, sb3, neqk1, rq3, scale, 0, 1,
+            s_ids, s_row_stride, stream, rp);
+        return;
+    }
+
     // chunked MMA prefill kernel (upstream ggml-org/llama.cpp#29353): scalar gates, state read in place (no fused
     // gather). Raw gates are activated into temporaries first, with the formulas of the RAW path below, so the
     // product graph (raw gates on CUDA) can take it. With K > 1 rollback snapshots (speculative decoding), one
     // sequence: the MMA kernel runs tokens [0, n - K) into a temporary state and the recurrent kernel continues
     // over the last K tokens from it, writing the K snapshot slots exactly as before.
-    // Opt in (GGML_CUDA_GDN_MMA=1) until end-to-end measurements establish defaults for each device family.
-    static const bool mma_off = getenv("GGML_CUDA_GDN_MMA") == nullptr || atoi(getenv("GGML_CUDA_GDN_MMA")) == 0;
     const int64_t n_mma = K == 1 ? n_tokens : (n_seqs == 1 ? n_tokens - K : 0);
     if (!mma_off && n_tokens >= 64 && (kda || n_mma < 64)) {
         static bool logged_skip = false;

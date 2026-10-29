@@ -8,6 +8,8 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -51,7 +53,7 @@ llama_memory_recurrent::llama_memory_recurrent(
         auto it = ctx_map.find(buft);
         if (it == ctx_map.end()) {
             ggml_init_params params = {
-                /*.mem_size   =*/ size_t(2u*n_layer*ggml_tensor_overhead()),
+                /*.mem_size   =*/ size_t(3u*n_layer*ggml_tensor_overhead()),
                 /*.mem_buffer =*/ NULL,
                 /*.no_alloc   =*/ true,
             };
@@ -71,6 +73,33 @@ llama_memory_recurrent::llama_memory_recurrent(
 
     r_l.resize(n_layer);
     s_l.resize(n_layer);
+    p_l.resize(n_layer);
+
+    {
+        // on by default (LLAMA_RS_REPLAY=0 disables): one state plane instead of one per draft token
+        const char * env = getenv("LLAMA_RS_REPLAY");
+        const bool want = env ? atoi(env) != 0 : true;
+        // the skip of a rejected token needs the fused GDN op with raw gates (qwen35.cpp: F32 ssm_dt / ssm_a)
+        bool raw_ok = model.arch == LLM_ARCH_QWEN35 && getenv("GGML_GDN_RAW_GATES_DISABLE") == nullptr;
+        for (int i = 0; raw_ok && i < n_layer; i++) {
+            if (filter && !filter(i)) continue;
+            const auto & l = model.layers[i];
+            raw_ok = l.ssm_dt && l.ssm_dt->type == GGML_TYPE_F32 && l.ssm_a && l.ssm_a->type == GGML_TYPE_F32;
+            // the replay op is CUDA only: every recurrent layer must sit on a GPU device
+            raw_ok = raw_ok && offload && ggml_backend_dev_type(model.dev_layer(i)) == GGML_BACKEND_DEVICE_TYPE_GPU;
+        }
+        // one sequence per context: with more, find_slot relocates cells and only their S rows move (not the pending rows)
+        replay = want && n_rs_seq > 0 && raw_ok && n_seq_max == 1 && hparams.ssm_d_state > 0 && hparams.ssm_dt_rank > 0;
+        if (env && want && !replay) {
+            LLAMA_LOG_WARN("%s: LLAMA_RS_REPLAY ignored (needs n_rs_seq > 0, one sequence, every recurrent layer on a GPU "
+                           "and a qwen35 model with raw GDN gates)\n", __func__);
+        }
+        if (replay) {
+            pend_k = hparams.ssm_d_state * hparams.ssm_n_group;
+            pend_v = hparams.ssm_d_inner;
+            pend_h = hparams.ssm_dt_rank;
+        }
+    }
 
     for (int i = 0; i < n_layer; i++) {
         if (filter && !filter(i)) {
@@ -98,11 +127,17 @@ llama_memory_recurrent::llama_memory_recurrent(
 
         const uint32_t n_rows = mem_size * (1 + n_rs_seq);
         ggml_tensor * r = ggml_new_tensor_2d(ctx, type_r, hparams.n_embd_r(), n_rows);
-        ggml_tensor * s = ggml_new_tensor_2d(ctx, type_s, hparams.n_embd_s(), n_rows);
+        ggml_tensor * s = ggml_new_tensor_2d(ctx, type_s, hparams.n_embd_s(), replay ? mem_size : n_rows);
         ggml_format_name(r, "cache_r_l%d", i);
         ggml_format_name(s, "cache_s_l%d", i);
         r_l[i] = r;
         s_l[i] = s;
+        if (replay) {
+            GGML_ASSERT(type_s == GGML_TYPE_F32);
+            ggml_tensor * p = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, (int64_t) pend_tok() * n_rs_seq + 1, mem_size);   // + the valid count
+            ggml_format_name(p, "cache_p_l%d", i);
+            p_l[i] = p;
+        }
     }
 
     // allocate tensors and initialize the buffers to avoid NaNs in the padding
@@ -124,6 +159,10 @@ llama_memory_recurrent::llama_memory_recurrent(
                 (float)(memory_size_r + memory_size_s) / (1024.0f * 1024.0f), mem_size, n_layer, n_seq_max, n_rs_seq,
                 ggml_type_name(type_r), (float)memory_size_r / (1024.0f * 1024.0f),
                 ggml_type_name(type_s), (float)memory_size_s / (1024.0f * 1024.0f));
+        if (replay) {
+            LLAMA_LOG_INFO("%s: replay rollback: one S plane + pending inputs of %u tokens (%u floats a token): P %7.2f MiB\n",
+                    __func__, n_rs_seq, pend_tok(), (float) size_p_bytes() / (1024.0f * 1024.0f));
+        }
     }
 }
 
@@ -733,6 +772,18 @@ size_t llama_memory_recurrent::size_r_bytes() const {
     return size_r_bytes;
 }
 
+size_t llama_memory_recurrent::size_p_bytes() const {
+    size_t size_p_bytes = 0;
+
+    for (const auto & p : p_l) {
+        if (p != nullptr) {
+            size_p_bytes += ggml_nbytes(p);
+        }
+    }
+
+    return size_p_bytes;
+}
+
 size_t llama_memory_recurrent::size_s_bytes() const {
     size_t size_s_bytes = 0;
 
@@ -750,6 +801,8 @@ void llama_memory_recurrent::state_write(llama_io_write_i & io, llama_seq_id seq
 
     std::vector<std::pair<uint32_t, uint32_t>> cell_ranges; // ranges, from inclusive, to exclusive
     std::vector<std::pair<uint32_t, uint32_t>> cell_ranges_data; // logical source row ranges
+    std::vector<std::pair<uint32_t, uint32_t>> cell_ranges_s;    // replay: the S / pending rows (plane 0)
+    std::vector<uint32_t> cell_masks;                            // replay: rejected pending tokens per cell
     uint32_t cell_count = 0;
 
     // Count the number of cells with the specified seq_id
@@ -788,6 +841,15 @@ void llama_memory_recurrent::state_write(llama_io_write_i & io, llama_seq_id seq
             } else {
                 cell_ranges_data.back().second++;
             }
+            if (replay) {
+                const uint32_t row = cell.src >= 0 ? cell.src : (int32_t) i;
+                if (cell_ranges_s.empty() || cell_ranges_s.back().second != row) {
+                    cell_ranges_s.emplace_back(row, row + 1);
+                } else {
+                    cell_ranges_s.back().second++;
+                }
+                cell_masks.push_back(rs_idx_cur);
+            }
 
             if (cell_range_begin == size) {
                 cell_range_begin = i;
@@ -823,7 +885,7 @@ void llama_memory_recurrent::state_write(llama_io_write_i & io, llama_seq_id seq
     io.write(&cell_count, sizeof(cell_count));
 
     state_write_meta(io, cell_ranges, seq_id);
-    state_write_data(io, cell_ranges_data);
+    state_write_data(io, cell_ranges_data, cell_ranges_s, cell_masks);
 }
 
 void llama_memory_recurrent::state_read(llama_io_read_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) {
@@ -876,8 +938,10 @@ void llama_memory_recurrent::state_write_meta(llama_io_write_i & io, const std::
     }
 }
 
-void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges) const {
-    const uint32_t s_trans = 0;
+void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges,
+        const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges_s, const std::vector<uint32_t> & cell_masks) const {
+    // 2: replay rollback (S plane + pending inputs, see p_l); an engine without replay refuses it (s transposition)
+    const uint32_t s_trans = replay ? 2 : 0;
     const uint32_t n_layer = hparams.n_layer();
 
     io.write(&s_trans, sizeof(s_trans));
@@ -906,7 +970,7 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
         }
     }
 
-    if (!s_trans) {
+    if (s_trans != 1) {
         for (uint32_t il = 0; il < n_layer; ++il) {
             // skip null layers (read_data will handle this by checking "r_l" and "s_l" for null)
             if (s_l[il] == nullptr) continue;
@@ -921,10 +985,30 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
 
             // Write each logical cell row range. With pending recurrent rollback,
             // the logical current state may live in a rollback snapshot plane.
-            for (const auto & range : cell_ranges) {
+            // With replay, S has one plane and the rollback lives in the pending masks.
+            for (const auto & range : (replay ? cell_ranges_s : cell_ranges)) {
                 const size_t range_size = range.second - range.first;
                 const size_t buf_size = range_size * s_size_row;
                 io.write_tensor(s_l[il], range.first * s_size_row, buf_size);
+            }
+        }
+
+        if (replay) {
+            // pending inputs: n_pend, floats per token, the rejected count of each cell, then per layer the rows
+            const uint32_t n_pend = n_rs_seq;
+            const uint32_t p_tok  = pend_tok();
+            io.write(&n_pend, sizeof(n_pend));
+            io.write(&p_tok,  sizeof(p_tok));
+            for (const uint32_t m : cell_masks) {
+                io.write(&m, sizeof(m));
+            }
+            for (uint32_t il = 0; il < n_layer; ++il) {
+                if (p_l[il] == nullptr) continue;
+                const uint64_t p_size_row = ggml_row_size(GGML_TYPE_F32, (int64_t) p_tok * n_pend + 1);
+                io.write(&p_size_row, sizeof(p_size_row));
+                for (const auto & range : cell_ranges_s) {
+                    io.write_tensor(p_l[il], range.first * p_size_row, (range.second - range.first) * p_size_row);
+                }
             }
         }
     } else {
@@ -1070,7 +1154,8 @@ bool llama_memory_recurrent::state_read_data(llama_io_read_i & io, uint32_t cell
         LLAMA_LOG_ERROR("%s: not enough cells in kv cache to restore state (%u > %u)\n", __func__, cell_count, size);
         return false;
     }
-    if (false != (bool) s_trans) {
+    // 0: plain S (with replay: the pending inputs start empty); 2: replay S + pending inputs (replay engines only)
+    if (s_trans != 0 && !(s_trans == 2 && replay)) {
         LLAMA_LOG_ERROR("%s: incompatible s transposition\n", __func__);
         return false;
     }
@@ -1104,7 +1189,7 @@ bool llama_memory_recurrent::state_read_data(llama_io_read_i & io, uint32_t cell
         }
     }
 
-    if (!s_trans) {
+    if (s_trans != 1) {
         for (uint32_t il = 0; il < n_layer; ++il) {
             // skip null layers
             if (s_l[il] == nullptr) continue;
@@ -1131,6 +1216,57 @@ bool llama_memory_recurrent::state_read_data(llama_io_read_i & io, uint32_t cell
             if (cell_count) {
                 // Read and set the values for the whole cell range
                 io.read_tensor(s_l[il], head * s_size_row, cell_count * s_size_row);
+            }
+        }
+
+        if (replay) {
+            const uint32_t n_pend = n_rs_seq;
+            const uint32_t p_tok  = pend_tok();
+            std::vector<uint32_t> masks(cell_count, 0);   // rejected pending tokens per cell (the rollback at the save)
+            if (s_trans == 2) {
+                uint32_t n_pend_ref = 0;
+                uint32_t p_tok_ref  = 0;
+                io.read(&n_pend_ref, sizeof(n_pend_ref));
+                io.read(&p_tok_ref,  sizeof(p_tok_ref));
+                if (n_pend_ref != n_pend || p_tok_ref != p_tok) {
+                    LLAMA_LOG_ERROR("%s: mismatched replay layout (%u x %u instead of %u x %u)\n", __func__,
+                            n_pend_ref, p_tok_ref, n_pend, p_tok);
+                    return false;
+                }
+                for (uint32_t i = 0; i < cell_count; ++i) {
+                    io.read(&masks[i], sizeof(masks[i]));
+                    if (masks[i] > n_pend) {
+                        LLAMA_LOG_ERROR("%s: bad replay mask %u\n", __func__, masks[i]);
+                        return false;
+                    }
+                }
+            }
+            const size_t row_floats = (size_t) p_tok * n_pend + 1;   // + the valid count
+            std::vector<float> buf(row_floats * cell_count, 0.0f);
+            for (uint32_t il = 0; il < n_layer; ++il) {
+                if (p_l[il] == nullptr) continue;
+                if (s_trans == 2) {
+                    uint64_t p_size_row_ref = 0;
+                    io.read(&p_size_row_ref, sizeof(p_size_row_ref));
+                    if (p_size_row_ref != row_floats * sizeof(float)) {
+                        LLAMA_LOG_ERROR("%s: mismatched p row size (%zu != %zu, layer %d)\n", __func__,
+                                (size_t) p_size_row_ref, row_floats * sizeof(float), il);
+                        return false;
+                    }
+                    if (cell_count) {
+                        io.read(buf.data(), buf.size() * sizeof(float));
+                    }
+                } else {
+                    std::fill(buf.begin(), buf.end(), 0.0f);   // a plain S file: count 0, no pending token
+                }
+                // the rejected (last masks[i]) pending tokens of each cell leave the valid count
+                for (uint32_t i = 0; i < cell_count; ++i) {
+                    float & cnt = buf[i * row_floats + row_floats - 1];
+                    cnt = (float) std::max(0, (int) cnt - (int) masks[i]);
+                }
+                if (cell_count) {
+                    ggml_backend_tensor_set(p_l[il], buf.data(), head * row_floats * sizeof(float), buf.size() * sizeof(float));
+                }
             }
         }
     } else {
@@ -1254,6 +1390,40 @@ ggml_tensor * llama_memory_recurrent_context::get_r_l(int32_t il) const {
 
 ggml_tensor * llama_memory_recurrent_context::get_s_l(int32_t il) const {
     return mem->s_l[il];
+}
+
+ggml_tensor * llama_memory_recurrent_context::get_p_l(int32_t il) const {
+    return mem->p_l[il];
+}
+
+bool llama_memory_recurrent_context::get_replay() const {
+    return mem->replay;
+}
+
+uint32_t llama_memory_recurrent_context::get_n_pend() const {
+    return mem->replay ? mem->n_rs_seq : 0;
+}
+
+int32_t llama_memory_recurrent_context::s_copy0(int i) const {
+    return mem->cells[i + mem->head].src0;
+}
+
+void llama_memory_recurrent_context::s_pend_info(int i, int32_t & row, int32_t & rejected, int32_t & fresh) const {
+    const uint32_t cell_idx = i + mem->head;
+    const auto & cell = mem->cells[cell_idx];
+    row      = cell.src0;
+    rejected = 0;
+    fresh    = cell.src0 < 0 || cell.src0 == mem->rs_z;   // a new (zeroed) state: its pending inputs are not its own
+    if (fresh) {
+        row = std::max<int32_t>(cell.src0, 0);
+        return;
+    }
+    if (!cell.seq_id.empty()) {
+        const llama_seq_id seq = *cell.seq_id.begin();
+        if (seq >= 0 && (size_t) seq < mem->rs_idx.size()) {
+            rejected = (int32_t) mem->rs_idx[seq];
+        }
+    }
 }
 
 int32_t llama_memory_recurrent_context::s_copy(int i) const {

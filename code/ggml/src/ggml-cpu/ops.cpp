@@ -11127,6 +11127,8 @@ static void ggml_compute_forward_gated_delta_net_f32(
         const ggml_compute_params * params,
         ggml_tensor * dst) {
 
+    GGML_ASSERT(ggml_get_op_params_i32(dst, 2) == 0 && "gated_delta_net replay (pending tokens) is CUDA only");
+
     ggml_tensor * V = dst->src[2];
     int64_t nr = V->ne[1] * V->ne[3];
 

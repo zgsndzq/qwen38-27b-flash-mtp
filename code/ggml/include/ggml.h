@@ -2626,6 +2626,24 @@ extern "C" {
             struct ggml_tensor  * rows,
             int                   n_snap_slots);
 
+    // replay rollback (llama LLAMA_RS_REPLAY): a raw-gate gated_delta_net op that first runs the pending tokens of each
+    // sequence (the GDN inputs of its last P tokens, kept in `pend`: rows of P tokens [k | v | g | beta] + one float
+    // holding how many are valid), skipping the ones `info` marks rejected, then the batch. `info` is I32 [3*n_seqs]:
+    // pend row, rejected count, fresh (1: the state is new, no pending token is valid). Output: the attention scores
+    // [S_v, H_v, n_tokens, n_seqs], then the state P tokens before the end (the commit point) [S_v, S_v, H_v, n_seqs],
+    // then the new pending rows [pend->ne[0], n_seqs] (padded to whole output rows). CUDA only.
+    GGML_API struct ggml_tensor * ggml_gated_delta_net_replay(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * q,
+            struct ggml_tensor  * k,
+            struct ggml_tensor  * v,
+            struct ggml_tensor  * g,
+            struct ggml_tensor  * beta,
+            struct ggml_tensor  * state,
+            struct ggml_tensor  * pend,
+            struct ggml_tensor  * info,
+            int                   n_pend);
+
     // fold the per-head gate activations into a gated_delta_net op (scalar gate only):
     //   beta -> sigmoid(beta),  g -> a[h] * softplus(g + dt_bias[h])
     // dt_bias and a are F32 with H_v elements; removes four elementwise ops per layer

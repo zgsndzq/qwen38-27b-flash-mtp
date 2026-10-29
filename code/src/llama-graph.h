@@ -340,6 +340,12 @@ public:
     ggml_tensor * s_copy_main;   // I32 [n_seqs]
     ggml_tensor * s_copy_extra;  // I32 [n_rs - n_seqs]
 
+    // replay rollback (llama_memory_recurrent::p_l), else nullptr
+    ggml_tensor * s_copy0       = nullptr; // I32 [n_rs]: S / pending rows (one plane)
+    ggml_tensor * s_copy0_main  = nullptr; // I32 [n_seqs]
+    ggml_tensor * s_copy0_extra = nullptr; // I32 [n_rs - n_seqs]
+    ggml_tensor * s_pinfo       = nullptr; // I32 [3 * n_seqs]: pending row, rejected count, fresh
+
     // GDN rows mode only (see build_rs_write_rows): I64 [n_write*n_seqs]
     // cache-row indices for the snapshot SET_ROWS scatter; created lazily,
     // shared across recurrent layers

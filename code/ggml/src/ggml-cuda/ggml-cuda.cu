@@ -7850,8 +7850,9 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
             return true;
         case GGML_OP_GATED_DELTA_NET:
             // rows-indexed state read (src[6]) not implemented on CUDA yet;
-            // reject so it falls back instead of silently reading src[5] as a scratch
-            if (op->src[6] != NULL) {
+            // reject so it falls back instead of silently reading src[5] as a scratch.
+            // The replay form (op param 2 > 0) uses src[6] for its per-sequence info instead.
+            if (op->src[6] != NULL && ggml_get_op_params_i32(op, 2) <= 0) {
                 return false;
             }
             //TODO: enable once MUSA compiler is solved https://github.com/ggml-org/llama.cpp/pull/19504#issuecomment-4018634327

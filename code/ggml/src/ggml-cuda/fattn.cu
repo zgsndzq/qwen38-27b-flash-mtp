@@ -122,6 +122,22 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2(ggml_backend_cuda_con
         }
     }
 
+    // GGML_CUDA_FA_PREFILL_NCOLS2=2 (on by default, =0 disables): prefill-sized ops (>= 64 queries) with a GQA ratio that
+    // 8 does not divide (6 here: 24 Q heads over 4 KV heads) pack 2 Q heads per column group instead of 8. With 8, two of
+    // every eight Q-head columns are padding and a tile holds only 32/8 tokens on Turing (64/8 on Ampere+), so each K/V tile
+    // is loaded once per 4 (8) tokens; with 2 there is no padding and a tile holds 16 (32) tokens, so 3 KV-head groups of
+    // 16 (32) tokens load each K/V tile 25 % less often. Every query row's arithmetic is the same either way.
+    {
+        static const int pre_nc2 = [] {
+            const char * e = getenv("GGML_CUDA_FA_PREFILL_NCOLS2");
+            return e ? atoi(e) : 2;
+        }();
+        if (pre_nc2 == 2 && use_gqa_opt && Q->ne[1] >= 64 && gqa_ratio % 8 != 0 && gqa_ratio % 2 == 0) {
+            ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<DKQ, DV, 2, type_KV>(ctx, dst);
+            return;
+        }
+    }
+
     if (use_gqa_opt && gqa_ratio > 4) {
         ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<DKQ, DV, 8, type_KV>(ctx, dst);
         return;
