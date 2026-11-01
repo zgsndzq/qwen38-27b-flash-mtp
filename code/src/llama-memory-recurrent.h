@@ -111,6 +111,8 @@ public:
     // per layer
     std::vector<ggml_tensor *> r_l;
     std::vector<ggml_tensor *> s_l;
+    // a second conv history that must stay replicated across devices, so it cannot share the r row
+    std::vector<ggml_tensor *> p_l;
 
     // replay rollback (LLAMA_RS_REPLAY=1, qwen35 GDN layers with raw gates): S keeps one plane, and p_l keeps the GDN
     // inputs of the last n_rs_seq tokens of each cell (row = n_rs_seq tokens of [k | v | gate | beta], then the count
@@ -121,7 +123,6 @@ public:
     uint32_t pend_v = 0; // v floats per token (ssm_d_inner)
     uint32_t pend_h = 0; // gate floats per token = beta floats per token (ssm_dt_rank)
     uint32_t pend_tok() const { return pend_k + pend_v + 2*pend_h; }
-    std::vector<ggml_tensor *> p_l;
 
 private:
     //const llama_model & model;
@@ -131,6 +132,9 @@ private:
 
     // ggml contexts for the KV cache along with the allocated backend buffers:
     std::vector<std::pair<ggml_context_ptr, ggml_backend_buffer_ptr>> ctxs_bufs;
+
+    // true if no layers - can happen if the layer filter removes all layers
+    bool is_empty() const;
 
     size_t total_size() const;
 
@@ -145,6 +149,8 @@ private:
 
     bool state_read_meta(llama_io_read_i & io, uint32_t cell_count, llama_seq_id dest_seq_id = -1);
     bool state_read_data(llama_io_read_i & io, uint32_t cell_count);
+
+    void state_clear(llama_seq_id seq_id, uint32_t cell_head, uint32_t cell_count);
 };
 
 class llama_memory_recurrent_context : public llama_memory_context_i {

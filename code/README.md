@@ -1,199 +1,151 @@
-# llama.cpp-qwen38-flash — llama.cpp fork for Qwen3.8-27B-Flash-MTP (PTQ1_0 + MTP)
+# llama.cpp
 
-A fork of [PrismML-Eng/llama.cpp](https://github.com/PrismML-Eng/llama.cpp) (`prism`
-branch), which is itself a fork of [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp).
-Built for **Qwen3.8-27B-Flash-MTP** — Qwen3.8-27B in ternary PTQ1_0 — on an **NVIDIA Ada
-(sm_89)** GPU, with speculative decoding driven by an **MTP draft head**.
+> [!IMPORTANT]
+> **This is the PrismML fork of llama.cpp**, the main line behind the [Bonsai](https://huggingface.co/collections/prism-ml/bonsai) models (branch `prism`, developed as `prism-v7`). It tracks current mainline llama.cpp and adds the fork's low-bit formats and runtime features on top.
+>
+> **New here? Start with the [Bonsai-demo](https://github.com/PrismML-Eng/Bonsai-demo) repo.** It downloads the right models and the correct prebuilt binaries for your hardware/backend automatically.
+>
+> **Which ternary model file to use:**
+>
+> - `*-PQ2_0.gguf` (fork group-128, ggml id 142): preferred on Metal, CUDA, HIP and CPU. About 6% smaller than group-64.
+> - `*-Q2_0_g64.gguf` / 27B `*-Q2_g64.gguf` (official group-64, ggml id 42): runs on every backend here AND on mainline llama.cpp. If unsure, use this. Newer model releases name this file plain `*-Q2_0.gguf`.
+> - `*-Q2_0.gguf` on OLDER model repos is the **deprecated legacy format** (group 128 stored as id 42). It does not load on these builds; the error tells you which file to get instead. If you must run it, use the frozen [`prism-v5`](https://github.com/PrismML-Eng/llama.cpp/tree/prism-v5) line and its final release [`prism-b9601`](https://github.com/PrismML-Eng/llama.cpp/releases/tag/prism-b9601-68faa14).
+>
+> **Speculative decoding (dspark)** is supported via mainline's draft-dspark plus fork patches. Drafters published for older model releases need a one-time conversion with `gguf-dspark-to-dflash` (see [SPECULATIVE.md](https://github.com/PrismML-Eng/Bonsai-demo/blob/main/SPECULATIVE.md) in Bonsai-demo); newer releases ship ready-to-use drafters.
+>
+> Do NOT build from `prism-v6` (stale mid-migration snapshot) and do NOT mix this fork's `ggml-*` libraries with a stock llama.cpp build.
 
-Upstream baseline: `e8fd209c9` (`grammar: allow schema property order (#347)`).
-Everything upstream has is carried over — this fork adds speed work on top of it.
-The unmodified upstream README is kept as `README.upstream.md`.
+---
 
-## How the product is split
+![llama](https://raw.githubusercontent.com/ggml-org/llama.brand/refs/heads/master/cover/llama-cpp/cover-llama-cpp-dark.svg)
 
-This repository is one half. The scripts a user actually touches are deliberately **not** here,
-because they need to be reviewable and patchable — they used to live only inside a release zip.
+<div align="center">
 
-| Where | What |
-|---|---|
-| **this repo** | the engine: PTQ1_0 kernels, MTP draft context, the speed work, the build scripts |
-| **[qwen38-27b-flash-mtp](https://github.com/zgsndzq/qwen38-27b-flash-mtp)** | what you launch: `llmserver.bat` / `llmserver.sh`, **`features.ini`**, `llmchat\`, `maps\` |
-| [Releases](https://github.com/zgsndzq/llama.cpp-qwen38-flash/releases) | prebuilt engine binaries (`build\bin` + `build\cuda`) |
-| [Hugging Face](https://huggingface.co/SuperLogic/Qwen3.8-27B-Flash-MTP-GGUF) | the weights |
+<b>LLM inference in C/C++</b>
 
-> ⚠️ **`features.ini` is not in this repository, and it is not compiled into the binary.**
-> `llama-server` has no built-in default path for it — it is picked up at runtime through
-> `--features-file features.ini`. A binary built from this source **without** that file behaves
-> like upstream, not like us. Which switches we ship is decided in the runtime repo, not here.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Release](https://img.shields.io/github/v/release/ggml-org/llama.cpp?filter=v*&color=brightgreen)](https://github.com/ggml-org/llama.cpp/releases?q=tag:v0)
+[![Nightly](https://img.shields.io/github/v/release/ggml-org/llama.cpp?label=nightly&filter=b*&color=orange)](https://github.com/ggml-org/llama.cpp/releases?q=b)
+[![Server](https://img.shields.io/github/actions/workflow/status/ggml-org/llama.cpp/server.yml?label=Server)](https://github.com/ggml-org/llama.cpp/actions/workflows/server.yml)
+[![Docker](https://img.shields.io/github/actions/workflow/status/ggml-org/llama.cpp/docker.yml?label=Docker)](https://github.com/ggml-org/llama.cpp/actions/workflows/docker.yml)
+[![Winget](https://img.shields.io/github/actions/workflow/status/ggml-org/llama.cpp/winget.yml?label=Winget)](https://github.com/ggml-org/llama.cpp/actions/workflows/winget.yml)
 
-The two repositories are meant to sit nested, which is the layout the build scripts assume
-(`_build_q8.bat` writes to `..\build\`):
+[ggml](https://github.com/ggml-org/ggml) / [ops](https://github.com/ggml-org/llama.cpp/blob/master/docs/ops.md) / [maintainer PRs](https://github.com/ggml-org/llama.cpp/issues?q=is%3Apr%20is%3Aopen%20draft%3AFalse%20(author%3Argerganov%20OR%20author%3AKitaitiMakoto%20OR%20author%3Adanbev%20OR%20author%3Aaldehir%20OR%20author%3Amax-krasnyansky%20OR%20author%3ACISC%20OR%20author%3Aggerganov%20OR%20author%3Aam17an%20OR%20author%3Ajhen0409%20OR%20author%3Abartowski1182%20OR%20author%3Anikwen%20OR%20author%3Ahipudding%20OR%20author%3Aravi9%20OR%20author%3AServeurpersoCom%20OR%20author%3Apwilkin%20OR%20author%3Areeselevine%20OR%20author%3Angxson%20OR%20author%3Ajeffbolznv%20OR%20author%3Amarty1885%20OR%20author%3A0cc4m%20OR%20author%3ATitaniumtown%20OR%20author%3Aangt%20OR%20author%3AIMbackK%20OR%20author%3Aarthw%20OR%20author%3AJohannesGaessler%20OR%20author%3AORippler%20OR%20author%3Aruixiang63%20OR%20author%3Axctan%20OR%20author%3Aallozaur%20OR%20author%3Ayomaytk%20OR%20author%3Aaendk%20OR%20author%3Awine99%20OR%20author%3Agaugarg-nv%20OR%20author%3Ataronaeo%20OR%20author%3Aforforever73%20OR%20author%3Alhez%20OR%20author%3Anetrunnereve%20OR%20author%3Afairydreaming)%20sort%3Aupdated-desc) / [dev stats](https://github.com/ggml-org/llama.cpp-dev) / [lib llama API](https://github.com/ggml-org/llama.cpp/issues/9289) / [llama-server REST API](https://github.com/ggml-org/llama.cpp/issues/9291)
 
-```bat
-git clone https://github.com/zgsndzq/qwen38-27b-flash-mtp
-cd qwen38-27b-flash-mtp
-git clone https://github.com/zgsndzq/llama.cpp-qwen38-flash code
-```
+</div>
 
-## Where are the weights
+## Quick start
 
-**Not here.** The gguf files live on Hugging Face:
-
-### 👉 https://huggingface.co/SuperLogic/Qwen3.8-27B-Flash-MTP-GGUF
-
-| File | Size | Needed for |
-|---|---|---|
-| `Qwen3.8-27B-Flash-MTP.gguf` | 5.79 GB | the model itself |
-| `mmproj-Qwen3.8-27B-Q8_0.gguf` | 0.59 GB | reading images |
-| `SHA256SUMS` | — | verifying the two above |
-
-Measured on the model card's reference machine (RTX 4060 Laptop, 8 GB): **70 t/s** with thinking
-off, **100–200 t/s** in editing mode. Stock llama.cpp cannot load these weights — `PTQ1_0` and
-the MTP draft context exist only in this fork.
-
-## What is ours
-
-Three layers. All of them are switchable at runtime, so none is hardcoded behaviour:
-
-| Layer | What |
-|---|---|
-| `our delta: keep only the speed optimizations` | tiered KV cache (`--kv-vram-cells`), in-place quantized-KV flash attention, PTQ1_0 mat-vec up to 8 columns, `--spec-draft-window` / `-n-max-tail`, `GGML_CUDA_BATCH_INVARIANT`, `--reasoning-effort-*` server flags, `GGML_CUDA_OP_TIMING` |
-| `port patch 0039` | `--spec-lookup-n-max`, a separate draft cap for the lookup drafters |
-| `ada fork: local feature layer` | `--features-file` + `common/features.{h,cpp}`: reads an INI and applies it *before* argument parsing, so a switch can be flipped without recompiling. The default is always upstream behaviour |
-
-## Build environment
-
-| | |
-|---|---|
-| OS | Windows x64, or Linux (plain CMake — see below) |
-| Compiler | MSVC (Visual Studio, any recent version) |
-| CUDA | CUDA Toolkit with `nvcc` — **11.x or newer** |
-| CMake | 3.21+ |
-| Ninja | any |
-| GPU | NVIDIA, compute capability **86 / 89** (the PTQ1_0 kernels are tuned for Ada) |
-
-Nothing else is needed. All third-party code is vendored under `vendor/`.
-
-## How to build
-
-### Windows
-
-1. Create your machine config from the template and edit it:
-
-   ```bat
-   copy build.local.example.bat build.local.bat
-   ```
-
-   Six values, all paths on *your* machine:
-
-   | Variable | Meaning |
-   |---|---|
-   | `VCVARS` | `vcvars64.bat`, or a wrapper around it |
-   | `CMAKE` | `cmake.exe` |
-   | `NINJA` | `ninja.exe` |
-   | `NVCC` | `nvcc.exe` from the CUDA Toolkit |
-   | `CUDA_ARCH` | compute capability. **89 for Ada**, 86 for Ampere |
-   | `JOBS` | parallelism. 4 keeps `nvcc` peak memory sane on a laptop GPU |
-
-   The build scripts read this file and fail fast with a message if it is missing,
-   so nothing is ever written into an unrelated directory.
-
-2. Build:
-
-   ```bat
-   _build_q8.bat        rem configure + full build
-   _build_inc.bat       rem incremental, only what ninja considers stale
-   ```
-
-   Binaries land in `..\build\src\bin\`, logs in `..\build\logs\`.
-   The build never writes inside the source tree.
-
-   `_build_clean.bat` wipes the build dir first. `_build_merge.bat` is `_build_q8.bat`
-   without the FA pin. `_fa_reconfig.bat` re-applies the pin only.
-
-3. That is all. The launcher in the runtime package accepts `..\build\src\bin\` directly, so
-   there is usually nothing to copy — it prefers a local build over the prebuilt `..\build\bin\`.
-
-### Linux
-
-There is no `.sh` build script; use CMake directly. The two flags that are not optional are
-`GGML_CUDA_FA_QUANTS=all` and an explicit `CMAKE_CUDA_ARCHITECTURES`.
+A few options to get `llama.cpp` installed on your machine:
 
 ```bash
-cmake -B build/src -S . -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_CUDA_ARCHITECTURES=89 \
-  -DGGML_CUDA=ON -DGGML_CUDA_FA=ON \
-  -DGGML_CUDA_FA_QUANTS=all \
-  -DLLAMA_CURL=OFF
-cmake --build build/src -j "$(nproc)" --target llama-server llama-bench llama-quantize
+# curl
+curl -LsSf https://llama.app/install.sh | sh
+
+# powershell
+irm https://llama.app/install.ps1 | iex
 ```
 
-### `GGML_CUDA_FA_QUANTS`
+- Visit https://llama.app and follow the instructions
+- Run with Docker - see our [Docker documentation](docs/docker.md)
+- Download pre-built binaries from the [releases page](https://github.com/ggml-org/llama.cpp/releases)
+- Build from source by cloning this repository - check out [our build guide](docs/build.md)
 
-The default build pins this to `all`, i.e. every `<K>-<V>` combination of the
-flash-attention vector kernel is compiled. Without a matching kernel the runtime
-**silently converts K and V to f16** — that changes both speed and numerics, and
-the only symptom is one warning at startup. `all` removes that failure mode at the
-cost of binary size. Shrink it again with:
+Once installed:
 
-```bat
-set "FAQUANTS=q4_0-q4_0;q8_0-q8_0;f16-f16"
+```sh
+# Download and run a model directly from Hugging Face
+llama cli -hf ggml-org/Qwen3.5-0.8B-GGUF
+
+# Launch OpenAI-compatible API server
+llama serve -hf ggml-org/Qwen3.5-0.8B-GGUF
 ```
 
-### Line endings
+<table align="center">
+    <tr>
+        <td align="center" width=50%>
+            <img width="1310" height="888" alt="VLM session with `llama cli`" src="https://github.com/user-attachments/assets/88726b48-1713-48aa-a525-95a02e78afc4" />
+            <i>VLM session with <b>llama cli</b></i>
+        </td>
+        <td align="center">
+            <img width="1392" height="958" alt="Built-in web UI against `llama serve` running Qwen 3.6" src="https://github.com/user-attachments/assets/b402f972-2e32-4def-8771-8d849f08cf2e" />
+            <i>Built-in web UI against <b>llama serve</b></i>
+        </td>
+    </tr>
+<table>
 
-`.gitattributes` pins `*.bat` to CRLF. Without it `core.autocrlf=input` normalises
-batch files to LF, and **cmd mis-parses them** — a `rem` line swallows the command
-that follows it.
+## Description
 
-## Running
+The main goal of `llama.cpp` is to enable LLM (and VLM) inference with minimal setup and state-of-the-art performance on
+a wide range of hardware - locally and in the cloud.
 
-`llama-server` takes the usual llama.cpp arguments. What matters for this model:
+- Plain C/C++ implementation without any dependencies
+- Apple silicon is a first-class citizen - optimized via ARM NEON, Accelerate and Metal frameworks
+- AVX, AVX2, AVX512 and AMX support for x86 architectures
+- RVV, ZVFH, ZFH, ZICBOP and ZIHINTPAUSE support for RISC-V architectures
+- 1.5-bit, 2-bit, 3-bit, 4-bit, 5-bit, 6-bit, and 8-bit integer quantization for faster inference and reduced memory use
+- Custom CUDA kernels for running LLMs on NVIDIA GPUs (support for AMD GPUs via HIP and Moore Threads GPUs via MUSA)
+- Vulkan and SYCL backend support
+- CPU+GPU hybrid inference to partially accelerate models larger than the total VRAM capacity
 
-```bat
-llama-server -m <model>.gguf ^
-  -c 65536 -b 4096 -t 8 -ngl 99 -fa on ^
-  -ctk q4_0 -ctv q4_0 ^
-  --spec-type ngram-mod,draft-mtp-adaptive --spec-draft-n-max 4 ^
-  --spec-ngram-mod-n-match 24 --spec-ngram-mod-n-min 24 ^
-  --spec-ngram-mod-n-max 64 --spec-lookup-n-max 64 ^
-  --reasoning-budget -1 ^
-  --features-file features.ini
-```
+The `llama.cpp` project is build on top of the [ggml](https://github.com/ggml-org/ggml) library.
 
-`--features-file` resolves relative to the **working directory**, and `features.ini` in turn
-holds `spec-draft-vocab-map = maps/shortlist_24k_mix.vocab.txt`, also relative. Run the server
-from the package root, or turn both into absolute paths.
+## Supported backends
 
-Notes:
+| Backend | Target devices |
+| --- | --- |
+| [BLAS](docs/build.md#blas-build) | All |
+| [BLIS](docs/backend/BLIS.md) | All |
+| [CANN](docs/build.md#cann) | Ascend NPU |
+| [CUDA](docs/build.md#cuda) | Nvidia GPU |
+| [HIP](docs/build.md#hip) | AMD GPU |
+| [Hexagon](docs/backend/snapdragon/README.md) | Snapdragon |
+| [IBM zDNN](docs/backend/zDNN.md) | IBM Z & LinuxONE |
+| [MUSA](docs/build.md#musa) | Moore Threads GPU |
+| [Metal](docs/build.md#metal-build) | Apple Silicon |
+| [OpenCL](docs/backend/OPENCL.md) | Adreno GPU |
+| [OpenVINO [In Progress]](docs/backend/OPENVINO.md) | Intel CPUs, GPUs, and NPUs |
+| [RPC](https://github.com/ggml-org/llama.cpp/tree/master/tools/rpc) | All |
+| [SYCL](docs/backend/SYCL.md) | Intel GPU |
+| [VirtGPU](docs/backend/VirtGPU.md) | VirtGPU APIR |
+| [Vulkan](docs/build.md#vulkan) | GPU |
+| [WebGPU](docs/build.md#webgpu) | All |
+| [ZenDNN](docs/build.md#zendnn) | AMD CPU |
 
-- **KV cache is `q4_0`** — half the bytes per cell of `q8_0`, so the whole 64k
-  window fits in the VRAM that `q8_0` needed for half of it.
-- **`--features-file`** holds our switches. Precedence is command line >
-  features file > default, so an explicit argument always wins.
-- **`--reasoning-budget`** is an external cap on the thinking block, not a choice
-  made for the model. `-1` means unlimited.
-- **`GGML_CUDA_SHARED_POOL=1`** shares one transient pool between the target and
-  the draft context, saving ~1.4 GB on an 8 GB card. Only safe with `--parallel 1`.
-- **`GGML_CUDA_FA_SHORTQ_MMA=0`** keeps the in-place quantized-KV kernel for short
-  verify batches. Setting it to 1 takes the upstream #189 detour, which was
-  measured to cost decode speed on this model.
-- The CUDA runtime dlls must sit next to the executable or on `PATH`; the packaged
-  runtime carries them in `..\build\cuda\`.
+## Documentation
 
-## Layout
+#### Tools
 
-```
-code\               this source tree
-..\build\src\       CMake / Ninja output
-..\build\bin\       runtime binaries (the prebuilt release lands here)
-..\build\cuda\      CUDA runtime dlls
-..\build\logs\      build logs
-..\weights\         gguf models
-..\features.ini     our runtime switches -- maintained in qwen38-27b-flash-mtp
-```
+- [cli](tools/cli/README.md)
+- [completion](tools/completion/README.md)
+- [server](tools/server/README.md)
+- [GBNF grammars](grammars/README.md)
 
-## License
+#### Development
 
-MIT, same as upstream llama.cpp.
+- [How to build](docs/build.md)
+- [Running on Docker](docs/docker.md)
+- [Build on Android](docs/android.md)
+- [Multi-GPU usage](docs/multi-gpu.md)
+- [Performance troubleshooting](docs/development/token_generation_performance_tips.md)
+- [GGML tips & tricks](https://github.com/ggml-org/llama.cpp/wiki/GGML-Tips-&-Tricks)
+- [XCFramework](docs/xcframework.md)
+- [Completions](docs/completions.md)
+- [Models](docs/models.md)
+- [Release process](docs/release.md)
+
+## Contributing
+
+- Contributors can open PRs
+- Collaborators will be invited based on contributions
+- Maintainers can push to branches in the `llama.cpp` repo and merge PRs into the `master` branch
+- Any help with managing issues, PRs and projects is very appreciated!
+- Read the [CONTRIBUTING.md](CONTRIBUTING.md) for more information
+
+## Acknowledgements
+
+- [yhirose/cpp-httplib](https://github.com/yhirose/cpp-httplib) - Single-header HTTP server, used by `llama-server` - MIT license
+- [nothings/stb](https://github.com/nothings/stb) - Single-header image format decoder, used by multimodal subsystem - Public domain
+- [nlohmann/json](https://github.com/nlohmann/json) - Single-header JSON library, used by various tools/examples - MIT License
+- [mackron/miniaudio](https://github.com/mackron/miniaudio) - Single-header audio format decoder, used by multimodal subsystem - Public domain
+- [sheredom/subprocess.h](https://github.com/sheredom/subprocess.h) - Single-header process launching solution for C and C++ - Public domain
