@@ -736,9 +736,16 @@ struct server_slot {
             // collapse), and mean len alone cannot distinguish the two. The two
             // assumptions differ by 2.8x in predicted speedup, so the shape is worth a
             // line in the log.
-            SLT_INF(*this,
-                    "     acc per pos = (%s), steps = %d\n",
-                    acceptance_rates_per_pos.c_str(), n_draft_verif_steps);
+            // LLAMA_ACC_PER_POS=0 silences the curve; the counter is unaffected.
+            static const bool acc_per_pos = [] {
+                const char * e = std::getenv("LLAMA_ACC_PER_POS");
+                return !e || atoi(e) != 0;
+            }();
+            if (acc_per_pos) {
+                SLT_INF(*this,
+                        "     acc per pos = (%s), steps = %d\n",
+                        acceptance_rates_per_pos.c_str(), n_draft_verif_steps);
+            }
         }
 
         common_speculative_print_stats(spec);
@@ -3590,7 +3597,15 @@ private:
                                                 rollback > 0 &&
                                                 llama_n_rs_seq(ctx_tgt) > 0 &&
                                                 rollback <= (llama_pos) llama_n_rs_seq(ctx_tgt);
-                                        const bool full_prefix_present = (pos_next > 0) && (exact || rollback_ok);
+                                        // ARC_SLOT_RESUME=0 puts upstream back in charge: a slot
+                                        // with no checkpoint is re-processed even when the whole
+                                        // prefix is in memory.
+                                        static const bool arc_slot_resume = [] {
+                                            const char * e = std::getenv("ARC_SLOT_RESUME");
+                                            return !e || atoi(e) != 0;
+                                        }();
+                                        const bool full_prefix_present = arc_slot_resume &&
+                                                (pos_next > 0) && (exact || rollback_ok);
 
                                         if (full_prefix_present) {
                                             SLT_INF(slot, "no checkpoint, but pos [0, %d) is in memory - keeping n_past = %d, pos_next = %d (rollback %d)\n",

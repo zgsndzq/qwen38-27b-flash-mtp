@@ -363,7 +363,7 @@ void ggml_cuda_mul_mat_q_fused_two(
     launch_one(src0_b, dst_b);
 }
 
-bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11, int64_t n_experts) {
+static bool ggml_cuda_should_use_mmq_impl(enum ggml_type type, int cc, int64_t ne11, int64_t n_experts) {
 #ifdef GGML_CUDA_FORCE_CUBLAS
     return false;
 #endif // GGML_CUDA_FORCE_CUBLAS
@@ -507,4 +507,21 @@ bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11, int64_t
     }
 
     return (!GGML_CUDA_CC_IS_CDNA(cc)) || ne11 < MMQ_DP4A_MAX_BATCH_SIZE;
+}
+
+// GGML_CUDA_MMQ_LOG=1 traces the dispatch decision. Ours: features.ini named this
+// switch from the start, but nothing read it, so the line looked applied and did
+// nothing. Off by default; the trace goes to GGML_CUDA_LOG_FILE only.
+bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11, int64_t n_experts) {
+    const bool use_mmq = ggml_cuda_should_use_mmq_impl(type, cc, ne11, n_experts);
+
+    static const bool mmq_log = [] {
+        const char * e = std::getenv("GGML_CUDA_MMQ_LOG");
+        return e && atoi(e) != 0;
+    }();
+    if (mmq_log) {
+        ggml_cuda_dbg_log("mmq: type=%d cc=%d ne11=%lld experts=%lld use_mmq=%d\n",
+                          (int) type, cc, (long long) ne11, (long long) n_experts, (int) use_mmq);
+    }
+    return use_mmq;
 }
