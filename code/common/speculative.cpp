@@ -4,6 +4,7 @@
 #include "ggml.h"
 #include "ggml-cpp.h"
 #include "llama.h"
+#include "llama-perf.h"
 #include "log.h"
 #include "ngram-cache.h"
 #include "ngram-map.h"
@@ -4582,6 +4583,9 @@ void common_speculative_draft(common_speculative * spec) {
 }
 
 void common_speculative_accept(common_speculative * spec, llama_seq_id seq_id, uint16_t n_accepted) {
+    // A-line in perf.csv: tokens the target took this round. No-op unless LLAMA_PERF_LOG >= 2.
+    llama_perf::note_accept((int) n_accepted);
+
     common_speculative_impl * impl = spec->impl_last[seq_id];
 
     if (impl == nullptr) {

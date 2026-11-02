@@ -23,13 +23,19 @@ WIN = os.name == "nt"
 BIN = "llama-server.exe" if WIN else "llama-server"
 DEFAULT_CONF = "server.json"
 
+# perf.csv is on by default: one D line per decode plus one A line per speculative
+# accept, which is what the monitoring view reads. "debug": true adds the rest.
+DEBUG_ALWAYS = {
+    "LLAMA_PERF_LOG": 2,
+    "LLAMA_PERF_LOG_FILE": "logs/perf.csv",
+}
+
 # "debug": true in a profile turns every server trace on, writing to files
 DEBUG_ALL = {
     "SPC_SRV_TIMING": 1,
     "GGML_CUDA_FA_LOG": 1,
     "GGML_CUDA_LOG_FILE": "logs/mmfa.log",
-    "LLAMA_PERF_LOG": 2,
-    "LLAMA_PERF_LOG_FILE": "logs/perf.csv",
+    **DEBUG_ALWAYS,
 }
 
 
@@ -89,9 +95,9 @@ def build_args(c, server_dir):
               alias features_file features_section draft_n ngram_n_{match,min,max}
     Optional: cells thinking effort reasoning_budget reasoning_budget_message
               vision mmproj image_min_tokens log_file bench kill_stale
-              debug   true = every server trace on, into logs/mmfa.log and
-                      logs/perf.csv; a dict instead overrides single keys.
-                      Omitted = all off, nothing is written.
+              debug   logs/perf.csv is always written (D line per decode, A line
+                      per speculative accept). true = every trace, adds mmfa.log;
+                      a dict overrides single keys; false = write nothing.
     """
     args = [
         str(server_dir / BIN),
@@ -168,15 +174,20 @@ def main():
     prepare_env(server_dir)
     if c.get("cells"):
         os.environ["GGML_CUDA_FA_CHUNK"] = str(c["cells"])
-    # "debug": true = every trace; a dict overrides single keys; absent = all off
+    # perf.csv is always written; "debug": true = every trace, a dict overrides single
+    # keys, "debug": false = nothing at all
     dbg = c.get("debug")
-    if dbg is True:
+    if dbg is False:
+        dbg = {}
+    elif dbg is True:
         dbg = DEBUG_ALL
-    for k, v in (dbg if isinstance(dbg, dict) else {}).items():
+    else:
+        dbg = {**DEBUG_ALWAYS, **(dbg or {})}
+    for k, v in dbg.items():
         if isinstance(v, str) and v.startswith("logs/"):
             v = str(HERE / v)
         os.environ[str(k)] = str(v)
-    if isinstance(dbg, dict) and dbg:
+    if dbg:
         (HERE / "logs").mkdir(parents=True, exist_ok=True)
         print("[debug] " + "  ".join(f"{k}={os.environ[str(k)]}" for k in dbg), flush=True)
     (HERE / "data" / "slots").mkdir(parents=True, exist_ok=True)

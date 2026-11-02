@@ -42,7 +42,8 @@ set(TARGET llama-common-base)
 add_library(${TARGET} STATIC ${OUTPUT_FILE})
 
 target_include_directories(${TARGET} PUBLIC .)
-
+# llama-perf.h lives in src/; common/ calls its accept hook (see the header comment)
+target_include_directories(${TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 if (BUILD_SHARED_LIBS)
     set_target_properties(${TARGET} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif()
