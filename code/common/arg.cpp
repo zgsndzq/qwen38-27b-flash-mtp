@@ -305,7 +305,11 @@ struct handle_model_result {
 // q3_0 K/V is ours (ARC-LAB:q3_0). Gated here: with the feature off the type is
 // never offered, so every q3_0 path behind this list stays unreachable and the
 // rest of the tree can go back to upstream unchanged.
-const std::vector<ggml_type> kv_cache_types = [] {
+//
+// Built on call, not once at load: the feature file is applied inside main(),
+// long after static initialisation, so a static list would freeze whatever the
+// real environment held at DLL load and the key in features.ini would never work.
+static std::vector<ggml_type> kv_cache_types() {
     std::vector<ggml_type> v = {
         GGML_TYPE_F32,
         GGML_TYPE_F16,
@@ -321,10 +325,10 @@ const std::vector<ggml_type> kv_cache_types = [] {
         v.push_back(GGML_TYPE_Q3_0);
     }
     return v;
-}();
+}
 
 static ggml_type kv_cache_type_from_str(const std::string & s) {
-    for (const auto & type : kv_cache_types) {
+    for (const auto & type : kv_cache_types()) {
         if (ggml_type_name(type) == s) {
             return type;
         }
@@ -334,8 +338,9 @@ static ggml_type kv_cache_type_from_str(const std::string & s) {
 
 static std::string get_all_kv_cache_types() {
     std::ostringstream msg;
-    for (const auto & type : kv_cache_types) {
-        msg << ggml_type_name(type) << (&type == &kv_cache_types.back() ? "" : ", ");
+    const std::vector<ggml_type> types = kv_cache_types();
+    for (const auto & type : types) {
+        msg << ggml_type_name(type) << (&type == &types.back() ? "" : ", ");
     }
     return msg.str();
 }
