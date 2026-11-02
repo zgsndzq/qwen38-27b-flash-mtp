@@ -46,6 +46,32 @@ BENCH=1 时切掉它以测裸速。
 `spec-draft-sampling = probabilistic`（两个 section 都有）。
 按请求温度做真采样 + 拒绝采样，比 match 模式质量更稳。
 
+### 1.6 给 3D-Coder 补 MTP 头（2026-11-02）
+
+`Qwen3.5-4B-3D-Coder` 的 config 写着 `mtp_num_hidden_layers: 1`，但微调把
+`mtp.*` 权重丢了（738 → 723 个张量），作者发布的 GGUF 因此
+`nextn_predict_layers=0`，没有草稿路径。把原模型 Qwen3.5-4B 的那一层搬进来即
+可，权重一个都不用重训：`tools/fetch_mtp.py`（按 HTTP Range 只拉 241 MB）+
+`tools/mtp_splice.py`（字节级重写 GGUF）。
+
+| 配置 | tg | acceptance | mean len |
+|---|---|---|---|
+| 原文件，无 spec | **47.94** | — | — |
+| 补头 + n-max 2 | 68.44 | 0.86 | 2.72 |
+| **补头 + n-max 4** | **90.66** | 0.71 | 3.6 |
+| 补头 + n-max 6 | 85.07 | 0.62 | 3.8 |
+| n-max 4 + ngram-mod | 89.48 | 0.69 | 3.6 |
+| n-max 4 + `LLAMA_MTP_DRAFT_UBATCH=64` | 89.42 | — | — |
+
+**+89%**，且 ngram 与 ubatch 均无额外收益（9B 上 n-max 2 更优的规律在这里反过来）。
+配置：`llmserver3d.bat` 的 `MODEL` 换成 `...-MTP-Q8_0.gguf` +
+`--spec-type draft-mtp-adaptive --spec-draft-n-max 4`。
+
+两个坑（各花了一轮）：MTP 层不能留 BF16，CPU 侧 RMSNorm 的 mul 直接报
+`binary_op: unsupported types ... src1: bf16` 并崩；Qwen3.5 的 HF 权重把
+RMSNorm 存成 `w-1`，转换器会 +1，从 safetensors 直接搬字节时漏掉这一步，
+头能跑但接受率是 **0/1198**。
+
 ---
 
 ## 2. KV 与显存：128K 能跑起来靠这些

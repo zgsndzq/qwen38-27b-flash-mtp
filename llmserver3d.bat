@@ -24,18 +24,26 @@ if exist "%~dp0build\cuda\bin" (
 )
 set "PATH=%SERVER%;%~dp0build\bin;%PATH%"
 
-set "MODEL=Qwen3.5-4B-3D-Coder-Q8_0.gguf"
+set "MODEL=Qwen3.5-4B-3D-Coder-MTP-Q8_0.gguf"
 set "MMPROJ=mmproj-Qwen3.5-4B-BF16.gguf"
-rem 4.17 GB of weights + q8_0 KV: 64K is the size the card was tested at, and it
-rem keeps the whole window inside 8 GB of VRAM. Raise only if you also drop ctk.
+rem 4.72 GB of weights + q8_0 KV: 64K is the size the card was tested at, and it
+rem keeps the whole window inside 8 GB of VRAM (measured 6769/8188 MiB with the
+rem projector and the draft context loaded). Raise only if you also drop ctk.
 set "CTX=65536"
 set "CTK=q8_0"
 set "CTV=q8_0"
 
-rem No --spec-type here on purpose: this GGUF carries qwen35.nextn_predict_layers=0,
-rem so there is no MTP head to draft from, and the card warns against MTP as well.
 rem No --features-file either - both [qwen] and [bonsai] sections tune MTP/PQ paths
 rem that this plain Q8_0 file does not take.
+rem
+rem MTP: the published GGUF has nextn_predict_layers=0 even though its config
+rem claims one MTP layer, so there was no draft path to use. tools/mtp_splice.py
+rem copies the head in from the base Qwen3.5-4B (now ...-MTP-Q8_0.gguf), and the
+rem card's warning about MTP predates that. Measured on this box, same prompt,
+rem 1200 tokens: 47.9 t/s plain -> 90.7 with draft-mtp-adaptive, acceptance 0.71,
+rem 3.6 tokens per step. n-max 2 gives 68.4, n-max 6 gives 85.1, so 4 it is.
+rem ngram-mod alongside it measured 89.5 (noise), LLAMA_MTP_DRAFT_UBATCH=64
+rem 89.4 (noise) - neither is set.
 
 rem Vision is on when the projector is present - same idiom as run_server.py, which
 rem enables it only if the file exists. Name it explicitly: llama-server otherwise
@@ -65,6 +73,7 @@ rem through chat_template_kwargs.enable_thinking.
   --slot-save-path "%~dp0data\slots" ^
   -c %CTX% -b 4096 -t 8 -ngl 99 -fa on -ctk %CTK% -ctv %CTV% %VIS% ^
   --temp 0.7 --top-p 0.95 --top-k 20 --repeat-penalty 1.0 ^
+  --spec-type draft-mtp-adaptive --spec-draft-n-max 4 --spec-draft-sampling probabilistic ^
   -rea auto ^
   --alias "Qwen3.5-4B-3D-Coder" ^
   --log-file "%~dp0logs\3d_server.log"
