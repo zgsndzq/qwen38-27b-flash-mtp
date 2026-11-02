@@ -66,6 +66,31 @@ git diff --ignore-cr-at-eol prism/prism:ggml HEAD:code/ggml     # 看差异
 | `llmserver.bat` | `CELLS` 由 `CTK`/`CTV` 推导、`REBUDGET=2048` |
 | `features.ini` | 开关集合（数字全部移到 bat） |
 
+### 4. 草稿门控旋钮（默认关，已实测无收益）
+
+机制是上游的：`--spec-draft-p-min` 在 `prism:common/arg.cpp`、`palmer:common/arg.cpp`
+都有，两处门控在 `speculative.cpp` 里，上游默认 `0.0f` 即关闭。**我们加的是三个旋钮**
+（上游 `common/` 里 grep 命中 0）：`--spec-draft-p-temp`（`p' = p^T` 幂修正）、
+`--spec-draft-p-min-keep`（前 N 步不许砍）、`--spec-draft-temp-scale`；另外把上游硬编码的
+`top_k = 10` 参数化成 `--spec-draft-top-k`。`spec_retune()` 因此多一个 `top_k` 形参，
+两处调用点传 `params.top_k`。
+
+2026-11-02 实测（Qwen3.8-27B MTP / q3_0 K+V / 24k 名单 / draft_n 4 / n_predict 400 /
+每版 5 轮丢首轮，草稿分布取自 `LLAMA_MTP_DRAFT_LOG`）：
+
+| 配置 | tg | 草稿步/轮 | stop | 第 0 步就停 |
+|---|---|---|---|---|
+| 基线 `p-min=0` | 57.2 | 2.90 | 0% | — |
+| `p-min .45` + `p-temp 1.6` | 55.3 (−3.4%) | 2.83 | 18.7% | 15.8% |
+| 再加 `p-min-keep 2` | 58.1（噪声内） | 3.01 | 6.9% | 0% |
+
+**结构上就没有空间**：每轮 48 ms，其中目标 forward ≈32 ms、草稿一步 ≈5.4 ms。砍对一步
+省 5.4 ms，砍错一步少一个 token、多跑一整轮 48 ms，盈亏平衡需要 **89% 的准确率**；
+而门控读的是草稿自己的 top-1（中位 0.954），实测接受率只有 59%（1.70/2.90），标定严重
+偏乐观，够不到 89%。所以 keep=0 时必然为负，加 keep 只是把亏损搬回噪声里。
+
+结论：**默认全关，不写进 `features.ini`**。换 drafter 或换模型后可以再测，入口还在。
+
 ---
 
 ## 二、已从上游同步的（不用再挑）

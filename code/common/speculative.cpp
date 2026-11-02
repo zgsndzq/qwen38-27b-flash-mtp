@@ -132,14 +132,15 @@ static int common_lab_knob(const char * name, int def) {
 #define SPEC_VOCAB_CHECK_START_TOKEN_ID 5
 
 // Rebuild seq_id's draft sampler at the target's temperature: rejection weighs q against p, so
-// both have to sample alike. Only temp and seed carry over; the draft keeps its own top_k.
+// both have to sample alike. The draft keeps its own top_k, which is the support of q.
 static void spec_retune(
         std::vector<common_sampler_ptr> & smpls,
         std::vector<common_params_sampling> & cfg,
         const llama_model * model,
         llama_seq_id seq_id,
         float temp,
-        uint32_t seed) {
+        uint32_t seed,
+        int32_t top_k) {
     if (cfg.size() != smpls.size()) {
         const size_t n_old = cfg.size();
         cfg.resize(smpls.size());
@@ -152,16 +153,17 @@ static void spec_retune(
 
     auto & cur = cfg[seq_id];
 
-    if (cur.temp == temp && cur.seed == seed) {
+    if (cur.temp == temp && cur.seed == seed && cur.top_k == top_k) {
         return;
     }
 
     cur.temp = temp;
     cur.seed = seed;
+    cur.top_k = top_k;
 
     common_params_sampling sparams;
     sparams.no_perf  = false;
-    sparams.top_k    = 10;
+    sparams.top_k    = top_k;
     sparams.temp     = cur.temp;
     // must be explicit, the default reseeds at random; mixed so it differs from the target's
     sparams.seed     = cur.seed == LLAMA_DEFAULT_SEED ? cur.seed : cur.seed ^ 0x85ebca6bu;
@@ -1217,7 +1219,8 @@ struct common_speculative_impl_draft_simple : public common_speculative_impl {
 
             // result_q is only set when the caller wants rejection, so it also gates the retune
             if (dp.result_q) {
-                spec_retune(smpls, smpls_cfg, llama_get_model(ctx_dft), seq_id, dp.temp, dp.seed);
+                spec_retune(smpls, smpls_cfg, llama_get_model(ctx_dft), seq_id,
+                            dp.temp * params.temp_scale, dp.seed, params.top_k);
             }
 
             // a reset reseeds the chain, which breaks probabilistic drafting
@@ -2583,7 +2586,9 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         n_mtp_layers = std::max(1, (int) llama_model_n_layer_nextn(llama_get_model(ctx_dft)));
 
         SPC_TRC("%s", "adding speculative implementation 'draft-mtp'\n");
-        SPC_TRC("- n_max=%d, n_min=%d, p_min=%.2f, n_embd=%d, backend_sampling=%d\n", this->params.n_max, this->params.n_min, this->params.p_min, n_embd, (int) this->params.backend_sampling);
+        SPC_TRC("- n_max=%d, n_min=%d, p_min=%.2f, p_temp=%.2f, p_min_keep=%d, top_k=%d, n_embd=%d, backend_sampling=%d\n",
+                this->params.n_max, this->params.n_min, this->params.p_min, this->params.p_temp,
+                this->params.p_min_keep, this->params.top_k, n_embd, (int) this->params.backend_sampling);
         SPC_TRC("- gpu_layers=%d, cache_k=%s, cache_v=%s, ctx_tgt=%s, ctx_dft=%s, devices=[%s]\n",
                 this->params.n_gpu_layers,
                 ggml_type_name(this->params.cache_type_k),
@@ -2598,7 +2603,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         for (auto & s : smpls) {
             common_params_sampling sparams;
             sparams.no_perf  = false;
-            sparams.top_k    = 10;
+            sparams.top_k    = this->params.top_k;
             sparams.samplers = { COMMON_SAMPLER_TYPE_TOP_K };
             s.reset(common_sampler_init(llama_get_model(ctx_dft), sparams));
         }
@@ -2608,7 +2613,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         if (this->params.backend_sampling) {
             for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
                 llama_sampler * chain = llama_sampler_chain_init(llama_sampler_chain_default_params());
-                llama_sampler_chain_add(chain, llama_sampler_init_top_k(10));
+                llama_sampler_chain_add(chain, llama_sampler_init_top_k(this->params.top_k));
 
                 if (!llama_set_sampler(ctx_dft, seq_id, chain)) {
                     SPC_WRN("backend offload failed for seq_id=%d; using CPU sampler\n", (int) seq_id);
@@ -3077,7 +3082,8 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
             // result_q is only set when the caller wants rejection, so it also gates the retune
             if (dp.result_q) {
-                spec_retune(smpls, smpls_cfg, llama_get_model(ctx_dft), seq_id, dp.temp, dp.seed);
+                spec_retune(smpls, smpls_cfg, llama_get_model(ctx_dft), seq_id,
+                            dp.temp * params.temp_scale, dp.seed, params.top_k);
             }
 
             // a reset reseeds the chain, which breaks probabilistic drafting
@@ -3166,6 +3172,14 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
                 const auto * cur_p = common_sampler_get_candidates(smpl, true);
 
+                // gate on the draft's own top-1. p_temp damps the head's overconfidence first
+                // (it reports 0.82 on steps the target accepts 0.50 of, so p^1.6 puts the gate
+                // back on the real scale); p_min_keep stops a bare p_min from aborting the chain
+                // at step 0, which pays the fixed draft cost for nothing (measured ~2x slower).
+                const float p_top  = cur_p->data[0].p;
+                const float p_gate = params.p_temp == 1.0f ? p_top : powf(p_top, params.p_temp);
+                const bool  p_stop = i >= params.p_min_keep && p_gate < params.p_min;
+
                 for (int k = 0; k < std::min(3, (int) cur_p->size); ++k) {
                     SPC_DBG(" - seq_id %d, draft candidate %3d, pos %3d: %6d (%8.3f) '%s'\n",
                             seq_id, k, i, cur_p->data[k].id, cur_p->data[k].p,
@@ -3178,7 +3192,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                     for (int k = 0; k < std::min(3, (int) cur_p->size); ++k) {
                         fprintf(lf, "%s[%d, %.4f]", k ? ", " : "", cur_p->data[k].id, cur_p->data[k].p);
                     }
-                    fprintf(lf, "], \"stop\": %d}\n", cur_p->data[0].p < params.p_min ? 1 : 0);
+                    fprintf(lf, "], \"stop\": %d}\n", p_stop ? 1 : 0);
                 }
                 // add drafted token for each sequence
                 const llama_token id = dparams.at(seq_id).result_q ? id_sampled : cur_p->data[0].id;
@@ -3192,7 +3206,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 }
 
                 // only collect very high-confidence draft tokens
-                if (cur_p->data[0].p < params.p_min) {
+                if (p_stop) {
                     drafting[seq_id] = false;
                     n_drafting--;
 
