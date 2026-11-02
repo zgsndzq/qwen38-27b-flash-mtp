@@ -12,7 +12,15 @@
 python chat.py --think server --temp 0.2
 ```
 
-`config.json` 的键和参数同名（下划线写法）：
+要换一套配置就多放一个 `config.<名字>.json`，第一个词点名即可 —— 不带名字
+时仍然用 `config.json`：
+
+```
+llmchat.bat bonsai           -> config.bonsai.json
+llmchat.bat bonsai --temp 0.2
+```
+
+配置文件的键和参数同名（下划线写法）：
 
 ```json
 {

@@ -60,13 +60,31 @@ OPTIONS = (
 REQUIRED = ("base_url", "timeout", "slot_min", "slot_grow")
 
 
-def load_config():
+def config_path(profile=None):
+    """config.json, or config.<profile>.json when the first word names one."""
+    base = Path(__file__).resolve().parent
+    if not profile:
+        return base / "config.json"
+    p = Path(profile)
+    if p.suffix == ".json" or p.parent != Path("."):
+        return p if p.is_absolute() else base / p
+    return base / f"config.{profile}.json"
+
+
+def load_config(profile=None):
     """config.json next to this file; a missing or broken one just means defaults."""
     try:
-        with open(Path(__file__).resolve().parent / "config.json", encoding="utf-8-sig") as f:
+        with open(config_path(profile), encoding="utf-8-sig") as f:
             return json.load(f)
     except (OSError, ValueError):
         return {}
+
+
+def pick_profile(argv):
+    """The leading bare word, if any, is a profile name; returns (name, rest)."""
+    if argv and not argv[0].startswith("-"):
+        return argv[0], argv[1:]
+    return None, argv
 
 
 def build_parser(conf=None):
@@ -77,6 +95,7 @@ def build_parser(conf=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="examples:\n"
                "  python chat.py --temp 0.6 --think on --effort low\n"
+               "  python chat.py bonsai              # config.bonsai.json instead of config.json\n"
                "  python chat.py --base-url http://127.0.0.1:18081 --think server\n")
     for key, flags, kwargs in OPTIONS:
         kw = dict(kwargs)
@@ -296,11 +315,17 @@ class Chat:
 
 
 def main(argv=None):
-    a = build_parser(load_config()).parse_args(argv)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    profile, argv = pick_profile(argv)
+    conf = load_config(profile)
+    if profile and not conf:
+        log(f"[ERROR] config.{profile}.json: not found next to chat.py")
+        return 2
+    a = build_parser(conf).parse_args(argv)
     log_setup(a.log, echo=not a.quiet)
     missing = [k for k in REQUIRED if getattr(a, k) is None]
     if missing:
-        log("[ERROR] config.json: missing " + ", ".join(missing))
+        log(f"[ERROR] {config_path(profile).name}: missing " + ", ".join(missing))
         return 2
     sys_prompt, rc = load_sys(a)
     if rc:
