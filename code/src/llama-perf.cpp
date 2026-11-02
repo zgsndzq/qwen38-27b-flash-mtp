@@ -2,10 +2,18 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <mutex>
 #include <string>
+
+#ifdef _WIN32
+#   include <io.h>
+#else
+#   include <unistd.h>
+#endif
 
 namespace llama_perf {
 
@@ -16,6 +24,9 @@ std::atomic<int> g_level{-1};   // -1 = not resolved yet
 std::mutex g_mu;
 std::FILE * g_fp = nullptr;
 bool g_owned = false;           // true when we opened the file (and must close it)
+size_t g_max = 1000;            // LLAMA_PERF_LOG_MAX, 0 = no cap
+std::deque<long> g_off;         // start offset of every record still in the file
+std::string g_header;           // rewritten at the top after every rotate
 double g_t0 = 0.0;
 
 // Accumulators between two note_decode calls. decode is single-threaded per context,
@@ -23,6 +34,63 @@ double g_t0 = 0.0;
 int    g_graphs    = 0;
 double g_graph_ms  = 0.0;
 int    g_splits    = 0;   // total sched splits across those graphs
+
+void set_file_size(std::FILE * fp, long size) {
+#ifdef _WIN32
+    _chsize_s(_fileno(fp), size);
+#else
+    (void) !::ftruncate(::fileno(fp), size);
+#endif
+}
+
+// Drop the older half of the file, so a long run keeps recent records instead of
+// freezing on the first N. Called with g_mu held.
+void rotate() {
+    const size_t half  = g_off.size() / 2;
+    const long   start = g_off[half];
+
+    std::fseek(g_fp, start, SEEK_SET);
+    std::string keep;
+    char buf[8192];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, g_fp)) > 0) {
+        keep.append(buf, n);
+    }
+
+    std::fseek(g_fp, 0, SEEK_SET);
+    std::fwrite(g_header.data(), 1, g_header.size(), g_fp);
+    std::fwrite(keep.data(), 1, keep.size(), g_fp);
+    set_file_size(g_fp, (long) (g_header.size() + keep.size()));
+    std::fseek(g_fp, 0, SEEK_END);
+
+    for (size_t i = 0; i < half; ++i) {
+        g_off.pop_front();
+    }
+    for (size_t i = 0; i < g_off.size(); ++i) {
+        g_off[i] = g_off[i] - start + (long) g_header.size();
+    }
+}
+
+// One record; capped so the file cannot grow without bound. Caller holds no lock.
+void emit(const char * fmt, ...) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    if (g_fp == nullptr) {
+        return;
+    }
+    if (g_max != 0 && g_off.size() >= g_max) {
+        if (!g_owned) {
+            return;   // stderr cannot be rewound, just stop
+        }
+        rotate();
+    }
+    g_off.push_back(g_owned ? std::ftell(g_fp) : 0);
+
+    va_list ap;
+    va_start(ap, fmt);
+    std::vfprintf(g_fp, fmt, ap);
+    va_end(ap);
+    std::fflush(g_fp);   // the monitor tails this file; a buffered line is a missing line
+}
 
 void init_once() {
     const char * env = std::getenv("LLAMA_PERF_LOG");
@@ -38,9 +106,15 @@ void init_once() {
         return;
     }
 
+    const char * cap = std::getenv("LLAMA_PERF_LOG_MAX");
+    if (cap != nullptr && cap[0] != '\0') {
+        const long v = std::atol(cap);
+        g_max = v > 0 ? (size_t) v : 0;
+    }
+
     const char * path = std::getenv("LLAMA_PERF_LOG_FILE");
     if (path != nullptr && path[0] != '\0') {
-        g_fp = std::fopen(path, "w");
+        g_fp = std::fopen(path, "w+");   // w+: rotate() reads the tail back
     }
     if (g_fp == nullptr) {
         g_fp = stderr;
@@ -48,8 +122,11 @@ void init_once() {
         g_owned = true;
     }
 
-    std::fprintf(g_fp, "# llama_perf level=%d\n", level);
-    std::fprintf(g_fp, "t_ms,kind,ctx,n_tokens,max_pos,ms,acc,graphs,graph_ms,splits\n");
+    char hdr[128];
+    std::snprintf(hdr, sizeof hdr, "# llama_perf level=%d max=%zu\n", level, g_max);
+    g_header  = hdr;
+    g_header += "t_ms,kind,ctx,n_tokens,max_pos,ms,acc,graphs,graph_ms,splits\n";
+    std::fwrite(g_header.data(), 1, g_header.size(), g_fp);
     std::fflush(g_fp);
 
     g_t0 = std::chrono::duration<double, std::milli>(
@@ -111,30 +188,18 @@ int graph_splits_take() {
 }
 
 void note_decode(int ctx_type, int n_tokens, int max_pos, double ms, int n_graphs, double graph_ms, int n_splits) {
-    const int lvl = level();
-    if (lvl < 1) {
+    if (level() < 1) {
         return;
     }
-    std::lock_guard<std::mutex> lock(g_mu);
-    if (g_fp == nullptr) {
-        return;
-    }
-    std::fprintf(g_fp, "%.3f,D,%d,%d,%d,%.3f,,%d,%.3f,%d\n",
-                 now_ms() - g_t0, ctx_type, n_tokens, max_pos, ms, n_graphs, graph_ms, n_splits);
-    std::fflush(g_fp);   // the monitor tails this file; a buffered line is a missing line
+    emit("%.3f,D,%d,%d,%d,%.3f,,%d,%.3f,%d\n",
+         now_ms() - g_t0, ctx_type, n_tokens, max_pos, ms, n_graphs, graph_ms, n_splits);
 }
 
 void note_accept(int n_accepted) {
-    const int lvl = level();
-    if (lvl < 2) {
+    if (level() < 2) {
         return;
     }
-    std::lock_guard<std::mutex> lock(g_mu);
-    if (g_fp == nullptr) {
-        return;
-    }
-    std::fprintf(g_fp, "%.3f,A,0,0,0,0.000,%d,0,0.000\n", now_ms() - g_t0, n_accepted);
-    std::fflush(g_fp);
+    emit("%.3f,A,0,0,0,0.000,%d,0,0.000\n", now_ms() - g_t0, n_accepted);
 }
 
 } // namespace llama_perf

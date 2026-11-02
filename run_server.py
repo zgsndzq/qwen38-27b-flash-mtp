@@ -24,10 +24,12 @@ BIN = "llama-server.exe" if WIN else "llama-server"
 DEFAULT_CONF = "server.json"
 
 # perf.csv is on by default: one D line per decode plus one A line per speculative
-# accept, which is what the monitoring view reads. "debug": true adds the rest.
+# accept, which is what the monitoring view reads. It keeps the newest 1000 records;
+# "debug": true adds the rest and lifts the cap.
 DEBUG_ALWAYS = {
     "LLAMA_PERF_LOG": 2,
     "LLAMA_PERF_LOG_FILE": "logs/perf.csv",
+    "LLAMA_PERF_LOG_MAX": 1000,
 }
 
 # "debug": true in a profile turns every server trace on, writing to files
@@ -36,7 +38,9 @@ DEBUG_ALL = {
     "GGML_CUDA_FA_LOG": 1,
     "GGML_CUDA_LOG_FILE": "logs/mmfa.log",
     **DEBUG_ALWAYS,
+    "LLAMA_PERF_LOG_MAX": 0,   # after the spread: debug keeps everything
 }
+
 
 
 def config_path(name=None):
@@ -96,8 +100,9 @@ def build_args(c, server_dir):
     Optional: cells thinking effort reasoning_budget reasoning_budget_message
               vision mmproj image_min_tokens log_file bench kill_stale
               debug   logs/perf.csv is always written (D line per decode, A line
-                      per speculative accept). true = every trace, adds mmfa.log;
-                      a dict overrides single keys; false = write nothing.
+                      per speculative accept), newest 1000 records. true = every
+                      trace, adds mmfa.log and no record cap; a dict overrides
+                      single keys; false = write nothing.
     """
     args = [
         str(server_dir / BIN),

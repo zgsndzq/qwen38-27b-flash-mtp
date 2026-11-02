@@ -160,6 +160,8 @@ mat-vec 155 t/s vs MMQ 244；n=5 时 172 vs 162。**5 是拐点，别动**
 - `LLAMA_PERF_LOG = 2` + `LLAMA_PERF_LOG_FILE = logs/perf.csv`：
   每次 decode 一行，含 ctx/kind/耗时/最大位置；level 2 加投机接受数。
   实时看：`python tools\perf_monitor.py logs\perf.csv`
+  文件只留最新 1000 条（`LLAMA_PERF_LOG_MAX`，0 = 不限，debug 全开时用 0）：
+  写满后丢掉前一半再续写，长跑也不会涨。
 - `SPC_SRV_TIMING = 1`：服务端每轮时间拆解（pre/draft/dec/round/post）
 - `GGML_CUDA_FA_LOG = 1` + `GGML_CUDA_MMQ_LOG = 1`：内核路由与 tile 选择，
   写文件不打屏（`GGML_CUDA_LOG_FILE`/`GGML_CUDA_LOG_MAX`，采样写满即停）

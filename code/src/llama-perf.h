@@ -6,7 +6,9 @@
 //   LLAMA_PERF_LOG=0   off (default)
 //   LLAMA_PERF_LOG=1   one line per llama_decode call
 //   LLAMA_PERF_LOG=2   also one line per speculative accept
-//   LLAMA_PERF_LOG_FILE=<path>   where to write (default: stderr)
+//   LLAMA_PERF_LOG_FILE=<path>   where to write (default: stderr), truncated on start
+//   LLAMA_PERF_LOG_MAX=<n>       records kept in the file (default 1000, 0 = keep all);
+//                                full halves are dropped once n is reached
 //
 // Output is CSV, one record per line, so tools/perf_monitor.py can tail it live and
 // anything else can just load it. Enable it from features.ini; a release build simply
