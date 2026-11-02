@@ -1,0 +1,4 @@
+Use only the Three.js core ES module from
+https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.min.js.
+Do not import addons or legacy examples/js paths;
+implement any camera controls directly inside the HTML.
