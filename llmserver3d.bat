@@ -25,6 +25,7 @@ if exist "%~dp0build\cuda\bin" (
 set "PATH=%SERVER%;%~dp0build\bin;%PATH%"
 
 set "MODEL=Qwen3.5-4B-3D-Coder-Q8_0.gguf"
+set "MMPROJ=mmproj-Qwen3.5-4B-BF16.gguf"
 rem 4.17 GB of weights + q8_0 KV: 64K is the size the card was tested at, and it
 rem keeps the whole window inside 8 GB of VRAM. Raise only if you also drop ctk.
 set "CTX=65536"
@@ -36,8 +37,15 @@ rem so there is no MTP head to draft from, and the card warns against MTP as wel
 rem No --features-file either - both [qwen] and [bonsai] sections tune MTP/PQ paths
 rem that this plain Q8_0 file does not take.
 
-rem Vision is off: mmproj-Qwen3.5-4B-BF16.gguf (644 MiB) is not in weights\. Add
-rem "--mmproj weights\mmproj-Qwen3.5-4B-BF16.gguf" after downloading it.
+rem Vision is on when the projector is present - same idiom as run_server.py, which
+rem enables it only if the file exists. Name it explicitly: llama-server otherwise
+rem tries to fetch an mmproj from the internet. One projector serves both quants and
+rem uses the stock Qwen3.5-4B visual encoder, per the model card. Image tokens come
+rem out of the same 64K window, and the projector costs extra VRAM - if it will not
+rem fit in 8 GB, cut CTX to 32768 before touching anything else.
+set "VIS="
+if exist "%~dp0weights\%MMPROJ%" set "VIS=--mmproj "%~dp0weights\%MMPROJ%" --image-min-tokens 1024"
+if not defined VIS echo note: weights\%MMPROJ% missing - starting text-only
 
 set "PORT=18080"
 if not exist "%~dp0logs" mkdir "%~dp0logs"
@@ -55,7 +63,7 @@ rem through chat_template_kwargs.enable_thinking.
 "%SERVER%\llama-server.exe" -m "%~dp0weights\%MODEL%" ^
   --host 127.0.0.1 --port %PORT% --parallel 1 --no-ui ^
   --slot-save-path "%~dp0data\slots" ^
-  -c %CTX% -b 4096 -t 8 -ngl 99 -fa on -ctk %CTK% -ctv %CTV% ^
+  -c %CTX% -b 4096 -t 8 -ngl 99 -fa on -ctk %CTK% -ctv %CTV% %VIS% ^
   --temp 0.7 --top-p 0.95 --top-k 20 --repeat-penalty 1.0 ^
   -rea auto ^
   --alias "Qwen3.5-4B-3D-Coder" ^

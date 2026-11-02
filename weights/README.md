@@ -32,7 +32,19 @@ weights\
 | 文件 | 大小 | 必须吗 |
 |---|---|---|
 | `Qwen3.5-4B-3D-Coder-Q8_0.gguf` | 4.17 GB | **必须**，`llmserver3d.bat` 用 |
-| `mmproj-Qwen3.5-4B-BF16.gguf` | 0.63 GB | 要读图片才需要，当前未下载 |
+| `mmproj-Qwen3.5-4B-BF16.gguf` | 0.63 GB | 要读图片才需要，已就位（Q4_K_M 和 Q8_0 共用这一个） |
 
 这个 GGUF 里 `qwen35.nextn_predict_layers = 0`，即**没有 MTP 头**，所以
 `llmserver3d.bat` 不传 `--spec-type`，`features.ini` 那几个 MTP 调参段也套不上。
+
+视觉：`llmserver3d.bat` 见到这个 mmproj 就自动带 `--mmproj ... --image-min-tokens 1024`
+（和 `run_server.py` 一样，文件不在就退回纯文本，不会启动失败）。显式指定它是必须的，
+否则 llama-server 会自己去网上抓一个 projector。发图用 llmchat：
+
+```powershell
+llmchat3d.bat                      # 进去后 /img F:\ref.png 挂图，再输入要求
+llmchat3d.bat --image F:\ref.png --once "build this as a scene"
+```
+
+图片 token 和正文共用那 64K 窗口，projector 也要额外占显存；8 GB 卡上如果装不下，
+先把 `CTX` 降到 32768，别动量化。

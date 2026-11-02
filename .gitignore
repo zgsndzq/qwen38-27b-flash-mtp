@@ -24,3 +24,6 @@ __pycache__/
 # runtime data (sessions, KV dumps, perf csv)
 data/
 llmchat/data/
+
+# 个人记忆（参考图与约定），换人换模型就该换，不进仓
+llmchat/mem/
