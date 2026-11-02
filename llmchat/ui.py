@@ -8,6 +8,8 @@ from log import log
 
 EXIT_CMDS = ("quit", "exit", "q", "/quit", "/exit")
 CLEAR_CMDS = ("clear", "/clear", "cls", "/cls")
+IMG_CMDS = ("/img", "/image")          # always with a slash: "img ..." is a normal sentence
+MEM_CMDS = ("/mem", "/memory")         # likewise: "memory is cheap here" stays a sentence
 PASTE_CMDS = ("/paste",)
 END_CMDS = ("/end", ":::end")
 
@@ -105,10 +107,14 @@ def stream_printer(hide_thinking=False):
 
 
 def meta(text):
-    """Session meta command -> 'exit' / 'clear' / None (None = send to the model)."""
+    """Session meta command -> 'exit' / 'clear' / 'img' / 'mem' / None (None = send it)."""
     t = (text or "").strip().lower()
     if t in EXIT_CMDS:
         return "exit"
     if t in CLEAR_CMDS:
         return "clear"
+    if t and t.split(maxsplit=1)[0] in IMG_CMDS:
+        return "img"
+    if t and t.split(maxsplit=1)[0] in MEM_CMDS:
+        return "mem"
     return None

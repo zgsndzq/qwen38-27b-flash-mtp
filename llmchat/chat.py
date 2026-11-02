@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+import memory
 import session as sess
 from log import log, setup as log_setup
 from client import ChatRequest, Client
@@ -46,6 +47,19 @@ OPTIONS = (
     ("once", ("--once",),
      {"metavar": "QUESTION", "default": None,
       "help": "non-interactive: ask this question and exit"}),
+    ("image", ("--image",),
+     {"metavar": "FILE", "action": "append",
+      "help": "attach an image to the question (repeatable; /img PATH does it in chat)"}),
+    ("mem", ("--mem",),
+     {"choices": ("0", "1", "2", "3"), "default": "0",
+      "help": "inject mem/ on the first turn: 1 text, 2 images, 3 both, 0 off"}),
+    ("mem_scope", ("--mem-scope",),
+     {"default": None, "metavar": "GROUP",
+      "help": "which shelf under mem/ to use ('all' = the whole directory)"}),
+    ("mem_pick", ("--mem-pick",),
+     {"choices": ("one", "all"), "default": "all",
+      "help": "images: 'one' attaches only the best-matching picture per message, "
+              "'all' injects every picture on the shelf"}),
     ("save", ("--save",),
      {"metavar": "FILE", "default": None,
       "help": "write the final answer to a UTF-8 file (with --once)"}),
@@ -96,7 +110,11 @@ def build_parser(conf=None):
         epilog="examples:\n"
                "  python chat.py --temp 0.6 --think on --effort low\n"
                "  python chat.py bonsai              # config.bonsai.json instead of config.json\n"
-               "  python chat.py --base-url http://127.0.0.1:18081 --think server\n")
+               "  python chat.py --base-url http://127.0.0.1:18081 --think server\n"
+               "  python chat.py --image ref.png --once \"make a scene like this\"\n"
+               "  python chat.py 3d                # config.3d.json: sys3d.txt + mem 3\n"
+               "in chat: /img PATH attaches to one message; /mem shows the shelf;\n"
+               "       /mem find QUERY ranks the gallery pictures by fit\n")
     for key, flags, kwargs in OPTIONS:
         kw = dict(kwargs)
         kw["default"] = conf.get(key, kw.get("default"))
@@ -108,14 +126,17 @@ def load_sys(a):
     """(system prompt, exit code); None means send no system message."""
     if not a.sys_file:
         return a.sys, 0
+    p = Path(a.sys_file)
+    if not p.is_absolute() and not p.exists():
+        p = Path(__file__).resolve().parent / p   # a profile names it next to chat.py
     try:
-        with open(a.sys_file, encoding="utf-8-sig") as f:   # strips Notepad's BOM
+        with open(p, encoding="utf-8-sig") as f:   # strips Notepad's BOM
             text = f.read().strip()
     except OSError as e:
-        log(f"[ERROR] cannot read --sys-file {a.sys_file}: {e}")
+        log(f"[ERROR] cannot read --sys-file {p}: {e}")
         return None, 2
     if not text:
-        log(f"[ERROR] --sys-file is empty: {a.sys_file}")
+        log(f"[ERROR] --sys-file is empty: {p}")
         return None, 2
     return text, 0
 
@@ -126,8 +147,19 @@ def seed_messages(sys_prompt):
 
 
 def parse_think(v):
-    """'on'/'off' -> True/False; 'server' -> None (keep the server's -rea)."""
-    return None if v == "server" else v == "on"
+    """'on'/'off' -> True/False; 'server' -> None (keep the server's -rea).
+
+    true/false/1/0/yes/no are accepted too: a config written as JSON booleans
+    used to fall through to "not on" and silently disable thinking."""
+    s = str(v).strip().lower()
+    if s in ("server", "none", ""):
+        return None
+    if s in ("on", "true", "1", "yes"):
+        return True
+    if s in ("off", "false", "0", "no"):
+        return False
+    log(f"[WARN] think = {v!r} is not on/off/server, treating it as on")
+    return True
 
 
 class Chat:
@@ -141,6 +173,12 @@ class Chat:
         self.slot_min = a.slot_min
         self.slot_grow = a.slot_grow
         self.messages = seed_messages(sys_prompt)
+        self.images = [Path(p) for p in (a.image or [])]   # staged for the next turn
+        self.mem_mode = int(a.mem or 0)     # the mem/ bit flags: 1 text, 2 image, 3 both
+        self.mem_group = a.mem_scope or memory.ALL
+        self.mem_pick = a.mem_pick           # 'one' picture per message, or 'all'
+        self.mem_used = set()                # pictures already riding in the history
+        self.mem_pending = None              # the one this turn offered, if any
         self.saved = sess.session_load() or {}
         self.slot_seen = int(self.saved.get("slot_tokens") or 0)
         self.need_restore = bool(self.saved.get("messages"))
@@ -196,9 +234,117 @@ class Chat:
         return n
 
     # ---- one turn -------------------------------------------------------
+    def first_turn(self):
+        """True while no user message exists; that is the one turn memory rides on."""
+        return not any(m["role"] == "user" for m in self.messages)
+
+    def find_picture(self, user):
+        """The gallery picture this message asks for, or None. At most one, ever."""
+        hit = memory.pick(user, self.mem_group)
+        if not hit:
+            return None
+        path, tag, got = hit
+        if path in self.mem_used:
+            return None                    # it is already in the history: do not pay twice
+        log(f"[mem] {path.name} fits ({got:.2f}) - goes with this message")
+        return path, tag
+
+    def content(self, user):
+        """Standing memory, then the picture asked for, then the question.
+
+        With mem_pick=one the shelf's pictures stay out of the standing head - each one
+        comes only on the message that matches it - so a gallery of thirty does not tax
+        every session. The order stays fixed for everything before the question, which
+        is what keeps the prompt cache hitting.
+        """
+        head = []
+        if self.first_turn():
+            mode = self.mem_mode
+            if self.mem_pick == "one":
+                mode &= ~memory.MEM_IMAGE     # pictures come from find_picture instead
+            head = list(memory.parts(self.mem_group, mode))
+        want = self.mem_pick == "one" and bool(self.mem_mode & memory.MEM_IMAGE)
+        self.mem_pending = self.find_picture(user) if want else None
+        if not head and not self.mem_pending and not self.images:
+            return user
+        parts = head
+        if self.mem_pending:
+            path, tag = self.mem_pending
+            if tag:
+                parts.append({"type": "text",
+                              "text": "[reference %s]\n%s" % (path.name, tag)})
+            parts.append({"type": "image_url", "image_url": {"path": str(path)}})
+        parts.append({"type": "text", "text": user})
+        parts += [{"type": "image_url", "image_url": {"path": str(p)}} for p in self.images]
+        return parts
+
+    def stage(self, text):
+        """`/img PATH` stages an image for the next message; `/img` alone drops them."""
+        parts = text.split(maxsplit=1)
+        arg = parts[1].strip().strip('"') if len(parts) > 1 else ""
+        if not arg:
+            n, self.images = len(self.images), []
+            log(f"dropped {n} staged image(s)" if n else "no image staged")
+            return
+        p = Path(arg).expanduser()
+        if not p.is_file():
+            log(f"[img] not found: {p}")
+            return
+        self.images.append(p.resolve())
+        log(f"[img] staged {p.name} ({p.stat().st_size / 1024:.0f} KB) - "
+            f"goes with your next message")
+
+    def mem_notice(self):
+        """Changing the shelf does not reach a session that already sent turn one."""
+        if not self.first_turn():
+            log("      memory is injected on the first turn only: /clear to re-inject")
+
+    def mem_cmd(self, text):
+        """/mem shows the shelf; MODE, use GROUP and add PATH change what rides in."""
+        words = text.split(maxsplit=2)
+        sub = words[1] if len(words) > 1 else ""
+        rest = words[2].strip().strip('"') if len(words) > 2 else ""
+        if not sub:
+            log(memory.describe(self.mem_group, self.mem_mode))
+            log("      pictures: %s (%s)"
+                % (self.mem_pick, "best match per message" if self.mem_pick == "one"
+                   else "every picture on the shelf"))
+        elif sub in ("0", "1", "2", "3") or sub.lower() == "off":
+            self.mem_mode = 0 if sub.lower() == "off" else int(sub)
+            log(f"[mem] mode {self.mem_mode} ({memory.SPECS[str(self.mem_mode)]})")
+            self.mem_notice()
+        elif sub.lower() in ("use", "group") and rest:
+            self.mem_group = rest
+            log(f"[mem] shelf '{rest}' -> {memory.shelf(rest)}")
+            self.mem_notice()
+        elif sub.lower() == "add" and rest:
+            src = Path(rest).expanduser()
+            if not src.is_file():
+                log(f"[mem] not found: {src}")
+            else:
+                log(f"[mem] added {memory.add(self.mem_group, src).name} to shelf "
+                    f"'{self.mem_group}'")
+                self.mem_notice()
+        elif sub.lower() == "pick" and rest in ("one", "all"):
+            self.mem_pick = rest
+            log(f"[mem] pictures: {rest}")
+        elif sub.lower() == "find" and rest:
+            rows = memory.rank(rest, self.mem_group)
+            if not rows:
+                log(f"[mem] no pictures on shelf '{self.mem_group}' to rank")
+            for got, path, tag in rows[:5]:
+                log("      %s %.2f  %-22s %s"
+                    % ("*" if got >= memory.MEM_MIN_SCORE else " ", got, path.name,
+                       "tagged" if tag else "NO TAG - cannot be matched"))
+            log("      cut-off %.2f, * is what would attach" % memory.MEM_MIN_SCORE)
+        else:
+            log("usage: /mem | /mem 0|1|2|3 | /mem use GROUP | /mem add FILE"
+                " | /mem find QUERY | /mem pick one|all")
+
     def turn(self, user):
         """Send one message. False means the server was unreachable."""
-        sent = self.messages + [{"role": "user", "content": user}]
+        msg = {"role": "user", "content": self.content(user)}
+        sent = self.messages + [msg]
         restored = self.restore()
         req = ChatRequest(sent, temperature=self.a.temp, max_tokens=self.a.max_tokens,
                           think=self.think, effort=self.a.effort)
@@ -214,7 +360,11 @@ class Chat:
             log()                       # already streamed, just end the line
         else:
             log(f"\nmodel> {content}")
-        self.messages.append({"role": "user", "content": user})
+        self.messages.append(msg)
+        self.images = []          # only consumed once the turn actually went through
+        if self.mem_pending:      # same rule for a picked picture
+            self.mem_used.add(self.mem_pending[0])
+            self.mem_pending = None
         self.messages.append(self.assistant(content, reasoning))
         if self.a.save:
             self.save_answer(content)
@@ -307,6 +457,12 @@ class Chat:
             if cmd == "clear":
                 self.clear()
                 continue
+            if cmd == "img":
+                self.stage(user)
+                continue
+            if cmd == "mem":
+                self.mem_cmd(user)
+                continue
             ok = self.turn(user)
             if self.a.once is not None:
                 return 0 if ok else 1
@@ -342,6 +498,8 @@ def main(argv=None):
     log(f"{model_id or 'model'} @ {base_url}")
 
     think = parse_think(a.think)
+    log("thinking: " + ("server default" if think is None else "on" if think else "off")
+        + (f", effort {a.effort}" if a.effort else ""))
     chat = Chat(a, client, sys_prompt, think)
     use_tui = HAS_TUI and sys.stdin.isatty() and not a.no_tui
     chat.psession = new_session() if use_tui else None

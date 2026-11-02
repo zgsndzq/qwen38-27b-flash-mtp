@@ -2,12 +2,57 @@
 # -*- coding: utf-8 -*-
 """Everything that talks to llama-server: probe, chat, slots."""
 
+import base64
 import json
 import socket
 import urllib.request
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 
 from log import log
+
+MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".webp": "image/webp", ".bmp": "image/bmp", ".gif": "image/gif"}
+
+
+@lru_cache(maxsize=8)
+def _encode(path, mtime_ns, size):
+    """One file's bytes, keyed by version: mtime_ns and size exist so that editing or
+    swapping the picture misses the cache, not because they change the encoding."""
+    mime = MIME[Path(path).suffix.lower()]
+    raw = Path(path).read_bytes()
+    return f"data:{mime};base64,{base64.b64encode(raw).decode()}"
+
+
+def _data_url(path):
+    """Read one attached image and put it on the wire as a data URL.
+
+    Cached because a memory picture sits in the history and goes out on every single
+    turn; re-reading and re-encoding a megabyte each time buys nothing.
+    """
+    p = Path(path)
+    if p.suffix.lower() not in MIME:
+        raise ValueError(f"unsupported image type: {p.name} (use {'/'.join(MIME)})")
+    st = p.stat()
+    return _encode(str(p), st.st_mtime_ns, st.st_size)
+
+
+def _wire(messages):
+    """History keeps image paths so the session stays small; the server wants bytes."""
+    out = []
+    for m in messages:
+        c = m.get("content")
+        if not isinstance(c, list):
+            out.append(m)
+            continue
+        parts = []
+        for part in c:
+            ref = (part.get("image_url") or {}).get("path")
+            parts.append({"type": "image_url", "image_url": {"url": _data_url(ref)}}
+                         if ref else part)
+        out.append({**m, "content": parts})
+    return out
 
 
 def _given(fields):
@@ -28,7 +73,7 @@ class ChatRequest:
     def body(self):
         return {
             "model": "gguf",
-            "messages": self.messages,
+            "messages": _wire(self.messages),
             "stream": True,
             **_given({"temperature": self.temperature, "max_tokens": self.max_tokens}),
             "chat_template_kwargs": _given({"enable_thinking": self.think,
@@ -71,9 +116,13 @@ class Client:
     # ---- chat ------------------------------------------------------------
     def chat(self, req, on_delta=None):
         """POST a ChatRequest and stream it. Returns (reasoning, content, timings)."""
+        try:
+            data = json.dumps(req.body(), ensure_ascii=False).encode("utf-8")
+        except (OSError, ValueError) as e:
+            raise ConnectionError(f"cannot attach the image: {e}") from e
         http = urllib.request.Request(
             self.base_url + "/v1/chat/completions",
-            data=json.dumps(req.body(), ensure_ascii=False).encode("utf-8"),
+            data=data,
             headers={"Content-Type": "application/json; charset=utf-8"})
 
         reasoning, content = [], []
@@ -113,8 +162,10 @@ class Client:
                     f"eval working, not a dead server -- raise --timeout or "
                     f"LLAMA_CHAT_TIMEOUT.")
         if "400" in str(e):
-            return ("\nThe server rejected the request (400), usually because the session "
-                    "is larger than the slot. Type clear and continue.")
+            return ("\nThe server rejected the request (400): either the session grew "
+                    "past the slot (type clear and continue), or an image arrived while "
+                    "the server runs without --mmproj (start llmserver3d.bat, which "
+                    "mounts the projector when weights\\ has one).")
         return ""
 
     # ---- slots -----------------------------------------------------------

@@ -1,0 +1,14 @@
+{
+  "base_url": "http://127.0.0.1:18080",
+  "timeout": 900,
+  "slot_min": 8192,
+  "slot_grow": 2048,
+  "sys_file": "sys3d.txt",
+  "think": "on",
+  "temp": 0.7,
+  "max_tokens": null,
+  "keep_thinking": true,
+  "mem": "3",
+  "mem_scope": "scene",
+  "mem_pick": "one"
+}

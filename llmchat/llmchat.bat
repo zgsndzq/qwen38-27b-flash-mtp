@@ -1,13 +1,13 @@
 @echo off
-cd /d %~dp0
+cd /d "%~dp0"
 
-rem Settings live in config.json; a first bare word picks config.<word>.json:
-rem   llmchat.bat           -> config.json
-rem   llmchat.bat bonsai    -> config.bonsai.json
-rem Flags passed on this line override whatever the file says.
+rem Config file to load. A file named on the command line wins; flags after it pass through.
+set "CONFIG=config.json"
 rem PY: full path if 'python' is not on PATH
 set "PY=python"
 
-title llmchat %1
-"%PY%" "%~dp0chat.py" %*
+if "%~1"=="" (set "ARGV=%CONFIG%") else (set "ARGV=%*")
+
+title llmchat %ARGV%
+"%PY%" "%~dp0chat.py" %ARGV%
 pause
