@@ -53,8 +53,8 @@ llama_memory_recurrent::llama_memory_recurrent(
         auto it = ctx_map.find(buft);
         if (it == ctx_map.end()) {
             ggml_init_params params = {
-                // r and s per layer, plus the separate PLE conv row where the model has one
-                /*.mem_size   =*/ size_t((hparams.ple_conv_state() > 0 ? 3u : 2u)*n_layer*ggml_tensor_overhead()),
+                // r and s per layer, plus the replay pending plane and the separate PLE conv row where the model has one
+                /*.mem_size   =*/ size_t((2u + (replay ? 1u : 0u) + (hparams.ple_conv_state() > 0 ? 1u : 0u))*n_layer*ggml_tensor_overhead()),
                 /*.mem_buffer =*/ NULL,
                 /*.no_alloc   =*/ true,
             };
