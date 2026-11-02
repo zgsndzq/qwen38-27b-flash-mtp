@@ -4,7 +4,7 @@
   "slot_min": 8192,
   "slot_grow": 2048,
   "sys_file": "sys3d.txt",
-  "think": "on",
+  "think": "off",
   "temp": 0.7,
   "max_tokens": null,
   "keep_thinking": true,
