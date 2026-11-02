@@ -19,6 +19,7 @@
 #include "arg.h"
 #include "common.h"
 
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -43,3 +44,15 @@ std::string common_params_find_features_file(int argc, char ** argv);
 
 // Same for "--features-section <name>" / "--features-section=<name>".
 std::string common_params_find_features_section(int argc, char ** argv);
+
+// Feature gate for one of our features. "0" turns it off and restores upstream
+// behaviour; unset or any other value keeps it on. Keys are the UPPER_CASE
+// names in features.ini, exported by common_set_env().
+//
+// Check it at the entry point only -- the type table, the option list, the
+// dispatch. One gate at the entrance takes the whole chain back to upstream,
+// the files behind it stay untouched.
+inline bool arc_lab_on(const char * key) {
+    const char * v = getenv(key);
+    return !(v != nullptr && v[0] == '0' && v[1] == '\0');
+}

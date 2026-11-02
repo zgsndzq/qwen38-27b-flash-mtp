@@ -302,18 +302,26 @@ struct handle_model_result {
     std::string preset_path;
 };
 
-const std::vector<ggml_type> kv_cache_types = {
-    GGML_TYPE_F32,
-    GGML_TYPE_F16,
-    GGML_TYPE_BF16,
-    GGML_TYPE_Q8_0,
-    GGML_TYPE_Q4_0,
-    GGML_TYPE_Q4_1,
-    GGML_TYPE_IQ4_NL,
-    GGML_TYPE_Q5_0,
-    GGML_TYPE_Q5_1,
-    GGML_TYPE_Q3_0,
-};
+// q3_0 K/V is ours (ARC-LAB:q3_0). Gated here: with the feature off the type is
+// never offered, so every q3_0 path behind this list stays unreachable and the
+// rest of the tree can go back to upstream unchanged.
+const std::vector<ggml_type> kv_cache_types = [] {
+    std::vector<ggml_type> v = {
+        GGML_TYPE_F32,
+        GGML_TYPE_F16,
+        GGML_TYPE_BF16,
+        GGML_TYPE_Q8_0,
+        GGML_TYPE_Q4_0,
+        GGML_TYPE_Q4_1,
+        GGML_TYPE_IQ4_NL,
+        GGML_TYPE_Q5_0,
+        GGML_TYPE_Q5_1,
+    };
+    if (arc_lab_on("GGML_CUDA_Q3_0_KV")) {
+        v.push_back(GGML_TYPE_Q3_0);
+    }
+    return v;
+}();
 
 static ggml_type kv_cache_type_from_str(const std::string & s) {
     for (const auto & type : kv_cache_types) {
