@@ -91,6 +91,7 @@ def build_args(c, server_dir):
         "-ngl", str(c["ngl"]), "-fa", "on" if c["flash_attn"] else "off",
         "-ctk", c["ctk"], "-ctv", c["ctv"],
         "--spec-type", spec_type(c),
+        "--spec-draft-sampling", "probabilistic",
         "--spec-draft-n-max", str(c["draft_n"]),
         "--spec-lookup-n-max", str(c["ngram_n_max"]),
         "--spec-ngram-mod-n-min", str(c["ngram_n_min"]),
