@@ -1362,6 +1362,13 @@ void launch_fattn(
         }
 
         if (chunk) {
+            // GGML_CUDA_FA_CHUNK: flash_attn_chunk_fold maps exactly one block to one dst tile and
+            // dst_tmp_meta is sized ntiles_dst. Stream-K splits a tile over several blocks and the
+            // fixup pass that combines them is not run for chunks, so a split launch would make the
+            // fold read blocks that were never written -- that is the assert seen once the KV cache
+            // grows past C cells. One block per tile is stream-k without the split: same kernel,
+            // per-tile output, and blocks_num.x == ntiles_dst by construction.
+            blocks_num.x = ntiles_dst;
             dst_tmp_meta.alloc(size_t(ntiles_dst) * ncols); // (max, rowsum) per block and column
         } else if (ntiles_dst % blocks_num.x != 0) { // Fixup is only needed if the SMs work on fractional tiles.
             dst_tmp_meta.alloc((size_t(blocks_num.x) * ncols * (2 + DV/2)));

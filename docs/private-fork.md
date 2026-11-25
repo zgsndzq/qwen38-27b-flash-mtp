@@ -93,6 +93,45 @@ git diff --ignore-cr-at-eol prism/prism:ggml HEAD:code/ggml     # 看差异
 
 ---
 
+### 5. 记忆层（memory，已落地）
+
+给引擎加可插拔记忆层：`--memory mem-wiki.gguf [mem-skills.gguf ...]` 按序加载记忆数据库，
+命中后把条目 token 包进 `<knowledge>` 块注入 prompt 头（视觉塔 `--mmproj` 同款范式，非上游）。
+**只增不改**：`LLAMA_MEMORY=0` 或无 `--memory` 时完全退化上游，既有模型行为不变。
+
+| 文件 | 加了什么 |
+|---|---|
+| `features.ini` | `LLAMA_MEMORY` 总开关、`LLAMA_MEM_REQ_TOGGLE` 请求级开关、`memory/mem-*` 样例 |
+| `common/common.h` | `common_params_memory`（paths/encoder/threshold/margin/top_k/budget/mode/rerank/req_toggle） |
+| `common/arg.cpp` | `--memory`(可重复) `--mem-encoder` `--mem-threshold` `--mem-margin` `--mem-topk` `--mem-budget` `--mem-mode` `--mem-rerank` `--mem-req-toggle` |
+| `tools/mem/`（新库 `mem`） | `mem.h` 接口、`mem-loader`（v1 f32 / v2 int8+scale）、`mem-retrieve`（点积+边距）、`mem-encoder`（塔，CPU-only）、`mem.cpp`（`<knowledge>` 包装、pinned、预算） |
+| `tools/server/server-context.cpp` | `memory_enabled()`、加载库并注册、注入块、`--mem-req-toggle` 生效点 |
+| `tools/CMakeLists.txt`、`tools/server/CMakeLists.txt` | 链接 `mem` 静态库 |
+
+两种关闭粒度：
+
+| 开关 | 默认 | 关掉之后 |
+|---|---|---|
+| `LLAMA_MEMORY=0` | 1 | 完全不加载、不注入，等价上游 |
+| `LLAMA_MEM_REQ_TOGGLE=0` / 无 `--mem-req-toggle` | 1（本项目） | 忽略请求体里的 `{"mem": false}`，每请求照常注入 |
+
+请求级开关代码位置（唯一一处）：
+
+```cpp
+const bool use_mem = ctx_server.mem != nullptr &&
+    (!ctx_server.mem->req_toggle() || data.value("mem", true));
+```
+
+用于 A/B 工具：同一 prompt 发两次，一次 `{"mem": false}` 得无记忆基线。
+
+v2 数据格式（`mem.version=2`）：`mem.key` 为 int8×256 + `mem.key_scale`，另有
+`mem.title_tokens/title_offsets`、`mem.tag_tokens/tag_offsets`、`mem.pinned`。
+v1（f32 key）仍可加载，靠 `mem.version` 分派。
+
+合并核对：上述 arg 仍在、`features.ini` 两个开关仍生效；`LLAMA_MEMORY=0` 时行为必须与上游一致。
+
+---
+
 ## 二、已从上游同步的（不用再挑）
 
 | 上游 | 内容 | 落点 |

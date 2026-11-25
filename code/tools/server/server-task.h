@@ -63,6 +63,7 @@ struct task_params {
     bool stream          = false;
     bool include_usage   = false;
     bool cache_prompt    = true; // remember the prompt to avoid reprocessing all prompt
+    bool is_dream        = false; // internal memory consolidation: no session/journal/cache side effects
     bool return_tokens   = false;
     bool return_progress = false;
 

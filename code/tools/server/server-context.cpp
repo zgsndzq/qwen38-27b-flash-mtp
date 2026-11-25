@@ -21,10 +21,14 @@
 #include "speculative.h"
 #include "mtmd.h"
 #include "mtmd-helper.h"
+#include "mem.h"
+#include "mem-journal.h"
+#include "mem-dream.h"
 #include "base64.hpp"
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdlib>
 #include <cinttypes>
 #include <deque>
 #include <exception>
@@ -690,7 +694,9 @@ struct server_slot {
 
             SLT_INF(*this, "stop processing: n_tokens = %d, truncated = %d\n", prompt.n_tokens(), truncated);
 
-            draft_vocab_observe_generated();
+            if (!task->params.is_dream) {
+                draft_vocab_observe_generated();
+            }
 
             t_last_used = ggml_time_us();
 
@@ -698,7 +704,8 @@ struct server_slot {
 
             // do not keep context of the child slots - the parent's context is enough
             // nor of the stateless slots - no task ever reuses it
-            if (task->is_child() || task->is_stateless() || audio_stream) {
+            // dream prompts must not leak into the prompt cache or the next conversation
+            if (task->is_child() || task->is_stateless() || audio_stream || task->params.is_dream) {
                 prompt_clear();
             }
 
@@ -1083,6 +1090,64 @@ static bool add_mtmd_chunk(const server_slot & slot, const mtmd_input_chunk * ch
 // server_context_impl (private implementation)
 //
 
+namespace {
+
+// generic on/off env used by fork features (1/true/on vs 0/false/off/empty)
+bool env_on(const char * name) {
+    const char * v = getenv(name);
+    if (v == nullptr) {
+        return false;
+    }
+    const std::string s = v;
+    return !(s.empty() || s == "0" || s == "false" || s == "off");
+}
+
+// memory layer is active only when the switch is on and both inputs are given
+bool memory_enabled(const common_params & params) {
+    const char * env = getenv("LLAMA_MEMORY");
+    if (env == nullptr) {
+        return false;
+    }
+    const std::string v = env;
+    if (v.empty() || v == "0" || v == "false" || v == "off") {
+        return false;
+    }
+    return !params.memory.paths.empty() && !params.memory.encoder.empty();
+}
+
+// last user turn text: chat messages, else the raw completion prompt
+std::string memory_question(const json & data) {
+    if (data.contains("messages") && data.at("messages").is_array() && data.at("messages").size() > 0) {
+        const auto & msgs = data.at("messages");
+        for (size_t i = msgs.size(); i-- > 0;) {
+            const auto & m = msgs.at(i);
+            if (!m.is_object() || m.value("role", std::string()) != "user") {
+                continue;
+            }
+            const auto & c = m.at("content");
+            if (c.is_string()) {
+                return c.get<std::string>();
+            }
+            std::string out;
+            if (c.is_array()) {
+                for (size_t j = 0; j < c.size(); j++) {
+                    const auto & part = c.at(j);
+                    if (part.is_object() && part.value("type", std::string()) == "text") {
+                        out += part.value("text", std::string());
+                    }
+                }
+            }
+            return out;
+        }
+    }
+    if (data.contains("prompt") && data.at("prompt").is_string()) {
+        return data.at("prompt").get<std::string>();
+    }
+    return "";
+}
+
+} // namespace
+
 struct server_context_impl {
     friend struct server_context;
 
@@ -1096,6 +1161,14 @@ public:
     // note: video_params.ffmpeg_bin_dir points into params_base, which outlives this struct
     mtmd_helper_init_opt init_opt = mtmd_helper_init_opt_default();
     const llama_vocab * vocab = nullptr;
+    std::unique_ptr<server_memory> mem; // engine-side memory layer (fork)
+
+    // writable memory (fork): journal + idle dreaming, inert unless the features are on
+    std::unique_ptr<mem_journal> mem_jrnl;
+    std::unique_ptr<mem_dreamer> mem_dream;
+    int64_t t_last_foreground = 0;
+    int64_t t_dream_check     = 0;
+    int     dream_task_id     = -1;
 
     bool has_cap_tts() const {
         return mctx != nullptr && mtmd_gen_audio_get_info(mctx).type != MTMD_GEN_AUDIO_TYPE_NONE;
@@ -1486,6 +1559,51 @@ private:
                 params_base.n_cache_reuse = 0;
                 SRV_WRN("%s\n", "cache_reuse is not supported by multimodal, it will be disabled");
             }
+        }
+
+        if (memory_enabled(params_base)) {
+            server_memory::config mcfg;
+            mcfg.paths     = params_base.memory.paths;
+            mcfg.encoder   = params_base.memory.encoder;
+            mcfg.threshold = params_base.memory.threshold;
+            mcfg.margin    = params_base.memory.margin;
+            mcfg.req_toggle = params_base.memory.req_toggle || env_on("LLAMA_MEM_REQ_TOGGLE");
+            mcfg.top_k     = params_base.memory.top_k;
+            mcfg.budget    = params_base.memory.budget;
+            mcfg.mode      = params_base.memory.mode;
+            mcfg.rerank    = params_base.memory.rerank;
+            mem = std::make_unique<server_memory>(mcfg);
+            std::string merr;
+            if (!mem->init(vocab, merr)) {
+                SRV_ERR("memory: %s\n", merr.c_str());
+                return false;
+            }
+            SRV_INF("memory: %zu database(s), %zu entries, encoder '%s'\n",
+                    mem->n_dbs(), mem->n_entries(), mcfg.encoder.c_str());
+        }
+
+        if (env_on("LLAMA_MEM_ARCHIVE") && !params_base.memory.dream_dir.empty()) {
+            mem_jrnl = std::make_unique<mem_journal>();
+            std::string jerr;
+            if (!mem_jrnl->open(params_base.memory.dream_dir, 64 * 1024 * 1024, jerr)) {
+                SRV_ERR("mem-journal: %s\n", jerr.c_str());
+                return false;
+            }
+            SRV_INF("mem-journal: dir '%s', %zu pending turns\n",
+                    params_base.memory.dream_dir.c_str(), mem_jrnl->n_turns());
+        }
+
+        if (env_on("LLAMA_MEM_DREAM") && mem && mem_jrnl && !params_base.memory.dream_card.empty()) {
+            mem_dream_config dcfg;
+            dcfg.card_path  = params_base.memory.dream_card;
+            dcfg.days       = params_base.memory.dream_days;
+            dcfg.max_tokens = params_base.memory.dream_max_tokens;
+            auto encode = [this](const std::string & text, std::vector<float> & out) {
+                return mem->encode(text, out);
+            };
+            mem_dream = std::make_unique<mem_dreamer>(dcfg, *mem_jrnl, vocab, encode);
+            SRV_INF("mem-dream: card '%s', age %d d, idle %d s\n",
+                    dcfg.card_path.c_str(), dcfg.days, params_base.memory.dream_idle_s);
         }
 
         if (!llama_memory_can_shift(llama_get_memory(ctx_tgt))) {
@@ -2481,17 +2599,113 @@ private:
         queue_results.send(std::move(res));
     }
 
+    // fork: record one completed visible turn as dream material (no reasoning, no injected memory)
+    void journal_capture(const server_slot & slot) {
+        std::string user;
+        const auto & msgs = slot.task->params.session_messages;
+        for (size_t i = msgs.size(); i-- > 0;) {
+            const auto & m = msgs.at(i);
+            if (m.is_object() && m.value("role", std::string()) == "user" &&
+                m.contains("content") && m.at("content").is_string()) {
+                user = m.at("content").get<std::string>();
+                break;
+            }
+        }
+        if (user.empty() || slot.generated.text.empty()) {
+            return;
+        }
+        mem_turn t;
+        t.ts        = (int64_t) time(nullptr);
+        t.session   = slot.task->params.session_id.empty() ? "anon" : slot.task->params.session_id;
+        t.user      = user.substr(0, 8000);
+        t.assistant = slot.generated.text.substr(0, 8000);
+        std::string err;
+        if (!mem_jrnl->append(t, err)) {
+            SRV_WRN("mem-journal: %s\n", err.c_str());
+        }
+    }
+
+    // fork: idle trigger, runs on the loop thread only when every slot is idle
+    void maybe_start_dream() {
+        if (!mem_dream || dream_task_id >= 0 || mem_dream->pending()) {
+            return;
+        }
+        const int64_t now = ggml_time_ms();
+        if (now - t_dream_check < 30 * 1000) {
+            return;
+        }
+        t_dream_check = now;
+        if (now - t_last_foreground < (int64_t) params_base.memory.dream_idle_s * 1000) {
+            return;
+        }
+        if (queue_tasks.queue_tasks_deferred_size() > 0) {
+            return;
+        }
+        std::string prompt, err;
+        if (!mem_dream->prepare((int64_t) time(nullptr), prompt, err)) {
+            if (!err.empty()) {
+                SRV_WRN("mem-dream: %s\n", err.c_str());
+            }
+            return;
+        }
+        server_task task(SERVER_TASK_TYPE_COMPLETION);
+        task.id                  = queue_tasks.get_new_id();
+        task.tokens              = server_tokens(common_tokenize(vocab, prompt, true), false);
+        task.params.is_dream     = true;
+        task.params.stream       = false;
+        task.params.cache_prompt = false;
+        task.params.n_predict    = mem_dream->max_tokens();
+        task.params.t_max_predict_ms = 120 * 1000;
+        task.params.sampling.temp    = 0.0f;
+        dream_task_id = task.id;
+        queue_tasks.post(std::move(task));
+        SRV_INF("mem-dream: started task %d\n", dream_task_id);
+    }
+
+    // fork: consume a finished dream, publish the card and hot-reload it
+    void dream_finished(const std::string & text) {
+        dream_task_id = -1;
+        std::string err;
+        if (!mem_dream->finish(text, err)) {
+            SRV_WRN("mem-dream: %s\n", err.c_str());
+            return;
+        }
+        if (mem && std::filesystem::exists(params_base.memory.dream_card)) {
+            std::string rerr;
+            if (!mem->upsert_db(params_base.memory.dream_card, rerr)) {
+                SRV_ERR("mem-dream: reload failed: %s\n", rerr.c_str());
+                return;
+            }
+            SRV_INF("mem-dream: card updated, %zu entries total\n", mem->n_entries());
+        }
+    }
+
     void send_final_response(server_slot & slot) {
-        slot.draft_vocab_observe_generated();
+        const bool is_dream = slot.task->params.is_dream;
+
+        if (!is_dream) {
+            slot.draft_vocab_observe_generated();
+        }
 
         // server-side conversation state: remember exactly what this turn decoded, so the next
         // request can continue from it instead of re-rendering (and thereby breaking) the history
-        if (!slot.task->is_child() && !slot.task->params.session_id.empty() && slot.stats.n_gen > 0 &&
+        if (!is_dream && !slot.task->is_child() && !slot.task->params.session_id.empty() && slot.stats.n_gen > 0 &&
             slot.task->params.session_messages.is_array() && !slot.prompt.tokens.has_mtmd) {
             server_sessions().put(slot.task->params.session_id,
                                   slot.prompt.tokens.get_tokens(),
                                   slot.task->params.session_messages,
                                   slot.task->params.session_n_consumed);
+        }
+
+        if (!is_dream && mem_jrnl && !slot.task->is_child() && slot.stats.n_gen > 0 &&
+            slot.task->params.session_messages.is_array()) {
+            journal_capture(slot);
+        }
+
+        // a dream has no HTTP reader: consolidate here and skip the normal result path
+        if (is_dream) {
+            dream_finished(slot.generated.text);
+            return;
         }
 
         auto res = std::make_unique<server_task_result_cmpl_final>();
@@ -3123,6 +3337,17 @@ private:
             case SERVER_TASK_TYPE_TTS:
             case SERVER_TASK_TYPE_DECISION:
                 {
+                    // fork: foreground work preempts a running dream at the next task boundary
+                    if (!task.params.is_dream) {
+                        t_last_foreground = ggml_time_ms();
+                        if (dream_task_id >= 0 && task.id != dream_task_id) {
+                            server_task cancel(SERVER_TASK_TYPE_CANCEL);
+                            cancel.id        = queue_tasks.get_new_id();
+                            cancel.id_target = dream_task_id;
+                            queue_tasks.post(std::move(cancel), true);
+                        }
+                    }
+
                     // special case: if input is provided via CLI, tokenize it first
                     // otherwise, no need to tokenize as it's already done inside the HTTP thread
                     if (task.cli) {
@@ -3191,6 +3416,12 @@ private:
                 } break;
             case SERVER_TASK_TYPE_CANCEL:
                 {
+                    if (task.id_target == dream_task_id) {
+                        dream_task_id = -1;
+                        if (mem_dream) {
+                            mem_dream->abort();
+                        }
+                    }
                     // release slot linked with the task id
                     for (auto & slot : slots) {
                         if (slot.task && slot.task->id == task.id_target) {
@@ -3689,6 +3920,8 @@ private:
                 SRV_TRC("%s", "all slots are idle\n");
 
                 metrics_flush_idle();
+
+                maybe_start_dream();
 
                 return; // skip further processing
 
@@ -5622,6 +5855,24 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
             inputs = tokenize_input_prompts(ctx_server.vocab, ctx_server.mctx, prompt_effective, true, true, ctx_server.init_opt);
         }
 
+        // memory layer: prepend the best-matching entry's tokens when the gate hits
+        // fork switch: with --mem-req-toggle a client may send {"mem": false} to get the
+        // no-memory baseline for the same prompt (A/B comparison tool relies on this)
+        const bool use_mem = ctx_server.mem != nullptr &&
+            (!ctx_server.mem->req_toggle() || data.value("mem", true));
+        if (ctx_server.mem) {
+            ctx_server.mem->clear_report();   // so a mem:false request reports nothing
+        }
+        if (use_mem && ctx_server.mctx == nullptr && type == SERVER_TASK_TYPE_COMPLETION &&
+            inputs.size() == 1) {
+            std::vector<llama_token> head;
+            if (ctx_server.mem->maybe_inject(memory_question(data), head)) {
+                server_tokens merged(head, false);
+                merged.push_back(inputs[0]);
+                inputs[0] = std::move(merged);
+            }
+        }
+
         // tasks.reserve(inputs.size()); // TODO: this is inaccurate due to child tasks
 
         for (size_t i = 0; i < inputs.size(); i++) {
@@ -5699,6 +5950,17 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
             }
             GGML_ASSERT(!arr.empty() && "empty results");
             if (arr.size() == 1) {
+                // fork: expose what the memory layer injected for this request
+                if (ctx_server.mem) {
+                    const std::string mrep = ctx_server.mem->last_report();
+                    if (!mrep.empty()) {
+                        try {
+                            arr[0]["memory"] = json::parse(mrep);
+                        } catch (...) {
+                            arr[0]["memory"] = json{{"tokens", 0}};
+                        }
+                    }
+                }
                 // if single request, return single object instead of array
                 res->ok(arr[0]);
             } else if (res_type == TASK_RESPONSE_TYPE_OAI_CHAT || res_type == TASK_RESPONSE_TYPE_OAI_CMPL) {

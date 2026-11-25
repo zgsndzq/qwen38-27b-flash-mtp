@@ -514,6 +514,26 @@ struct lr_opt {
 
 struct ggml_opt_optimizer_params common_opt_lr_pars(void * userdata);
 
+// memory layer (fork): pluggable mem.gguf databases, inactive unless --memory is given
+struct common_params_memory {
+    std::vector<std::string> paths;    // mem.gguf files, loaded in order
+    std::string encoder;               // embedding tower gguf
+    float       threshold = 0.68f;     // retrieval threshold
+    float       margin    = 0.0f;      // min top1-top2 gap, 0 = off
+    bool        req_toggle = false;    // honour per-request {"mem": false} (fork A/B switch)
+    int32_t     top_k     = 3;         // entries kept after retrieval
+    int32_t     budget    = 4096;      // max memory tokens injected
+    std::string mode      = "auto";    // auto | first | off
+    std::string rerank    = "sim+sym"; // sim | sim+sym | sim+sym+ce
+
+    // writable memory (fork): turn journal + idle dreaming into a dynamic card
+    std::string dream_dir;             // journal directory, empty = archive off
+    std::string dream_card;            // dynamic mem.gguf path, empty = dreaming off
+    int32_t     dream_days      = 7;   // cold-cache age before consolidation
+    int32_t     dream_idle_s    = 300; // foreground idle seconds before a dream
+    int32_t     dream_max_tokens = 1024;
+};
+
 struct common_params {
     int32_t n_predict             =    -1; // max. number of new tokens to predict, -1 == no limit
     int32_t n_ctx                 =     0; // context size, 0 == context the model was trained with
@@ -673,6 +693,7 @@ struct common_params {
     bool mmproj_use_gpu = true;                 // use GPU for multimodal model
     ggml_backend_dev_t mmproj_device = nullptr; // GPU device to use for multimodal model
     bool no_mmproj = false;                     // explicitly disable multimodal model
+    common_params_memory memory;                // fork: pluggable memory layer (mem.gguf)
     std::vector<std::string> image;             // path to image file(s) ; TODO: change the name to "media"
     int image_min_tokens = -1;
     int image_max_tokens = -1;

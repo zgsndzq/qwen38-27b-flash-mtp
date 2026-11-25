@@ -2729,6 +2729,106 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples(mmproj_examples).set_env("LLAMA_ARG_MMPROJ_OFFLOAD"));
     add_opt(common_arg(
+        {"--memory"}, "FILE",
+        "path to a memory database (mem.gguf). repeatable; files load in the order given",
+        [](common_params & params, const std::string & value) {
+            for (const auto & item : parse_csv_row(value)) {
+                params.memory.paths.push_back(item);
+            }
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_MEMORY"));
+    add_opt(common_arg(
+        {"--mem-encoder"}, "FILE",
+        "path to the memory query encoder (embedding tower gguf)",
+        [](common_params & params, const std::string & value) {
+            params.memory.encoder = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_MEM_ENCODER"));
+    add_opt(common_arg(
+        {"--mem-margin"}, "N",
+        string_format("require top1-top2 score gap >= N to inject (default: %.2f, 0 = off)", params.memory.margin),
+        [](common_params & params, const std::string & value) {
+            params.memory.margin = std::stof(value);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_MEM_MARGIN"));
+    add_opt(common_arg(
+        {"--mem-req-toggle"},
+        "honour per-request {\"mem\": false} to skip injection (default: off)",
+        [](common_params & params) {
+            params.memory.req_toggle = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_MEM_REQ_TOGGLE"));
+    add_opt(common_arg(
+        {"--mem-threshold"}, "N",
+        string_format("memory retrieval threshold (default: %.2f)", params.memory.threshold),
+        [](common_params & params, const std::string & value) {
+            params.memory.threshold = std::stof(value);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_MEM_THRESHOLD"));
+    add_opt(common_arg(
+        {"--mem-topk"}, "N",
+        string_format("memory entries kept after retrieval (default: %d)", params.memory.top_k),
+        [](common_params & params, const std::string & value) {
+            params.memory.top_k = std::stoi(value);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_MEM_TOPK"));
+    add_opt(common_arg(
+        {"--mem-budget"}, "N",
+        string_format("max memory tokens injected per request (default: %d)", params.memory.budget),
+        [](common_params & params, const std::string & value) {
+            params.memory.budget = std::stoi(value);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_MEM_BUDGET"));
+    add_opt(common_arg(
+        {"--mem-mode"}, "MODE",
+        "memory injection mode: auto | first | off (default: auto)",
+        [](common_params & params, const std::string & value) {
+            params.memory.mode = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_MEM_MODE"));
+    add_opt(common_arg(
+        {"--mem-rerank"}, "SPEC",
+        "memory rerank: sim | sim+sym | sim+sym+ce (default: sim+sym)",
+        [](common_params & params, const std::string & value) {
+            params.memory.rerank = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_MEM_RERANK"));
+    add_opt(common_arg(
+        {"--mem-dream-dir"}, "DIR",
+        "writable memory: turn journal directory (empty = off, needs LLAMA_MEM_ARCHIVE)",
+        [](common_params & params, const std::string & value) {
+            params.memory.dream_dir = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--mem-dream-card"}, "FILE",
+        "writable memory: dynamic mem.gguf written by idle dreaming (needs LLAMA_MEM_DREAM)",
+        [](common_params & params, const std::string & value) {
+            params.memory.dream_card = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--mem-dream-days"}, "N",
+        string_format("writable memory: journal age in days before dreaming (default: %d)", params.memory.dream_days),
+        [](common_params & params, const std::string & value) {
+            params.memory.dream_days = std::stoi(value);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--mem-dream-idle"}, "N",
+        string_format("writable memory: foreground idle seconds before a dream (default: %d)", params.memory.dream_idle_s),
+        [](common_params & params, const std::string & value) {
+            params.memory.dream_idle_s = std::stoi(value);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--mem-dream-tokens"}, "N",
+        string_format("writable memory: max tokens generated per dream (default: %d)", params.memory.dream_max_tokens),
+        [](common_params & params, const std::string & value) {
+            params.memory.dream_max_tokens = std::stoi(value);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
         // note: "-mmdev" must sort after "--rpc" in the preset map, else RPC devices are not registered yet
         {"-mmdev", "--mmproj-device"}, "DEVICE",
         "device to use for multimodal projector (none = don't offload, default: follows --device)\n"
