@@ -77,3 +77,22 @@ llmchat.bat config.bonsai.json --temp 0.2
   历史里存的是图片路径，发送时才编码成 data URL，所以存档不会被 base64 撑大。
 - 图片吃的是上下文窗口，下限 1024 token/张；跑一轮看 `[speed] prefill N tok` 是真实值。
 - `llmchat.bat` 和 `llmchat3d.bat` 必须是 ASCII + CRLF。
+
+## 记忆 A/B 对照（llmchat-mem.bat）
+
+同一个 prompt 发两次：一次不带记忆、一次带记忆，左右两栏并排，用来看记忆库到底有没有用。
+
+```
+llmchat-mem.bat               交互，一行一个 prompt
+llmchat-mem.bat -f q.txt      批量，文件里每行一个
+llmchat-mem.bat --code        代码档（temp 0.2 / presence 0.3）
+llmchat-mem.bat --stack       窄终端改成上下两段
+```
+
+- 不带历史、不落 session，纯单轮
+- 两侧用同一组采样参数和同一个 seed（默认 42），只有记忆开闭不同
+- 不带记忆那侧靠引擎的请求级开关 `{"mem": false}`，需要服务端
+  `features.ini` 里 `LLAMA_MEM_REQ_TOGGLE = 1`（默认已开）
+- 连 `config.json` 里的 `base_url`（18080），可用 `--base-url` 覆盖
+
+底部两列数字是「耗时 · 生成 token · t/s」；若两侧输出完全一致，会提示这条 prompt 没触发记忆。

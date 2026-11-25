@@ -3,6 +3,7 @@
 """Input and display; prompt_toolkit is optional."""
 
 import sys
+import time
 
 from log import log
 
@@ -79,30 +80,50 @@ def read_user(session=None, prompt="you> "):
             return text
 
 
-def stream_printer(hide_thinking=False):
-    """on_delta(kind, text); the returned callable carries .streamed."""
+def stream_printer(hide_thinking=False, interval=0.05):
+    """on_delta(kind, text); the returned callable carries .streamed and .flush().
+
+    Deltas are coalesced for `interval` seconds instead of one write+flush per token:
+    thinking text has no newlines, so every flush forces the console to re-wrap and
+    repaint one ever-growing line. With 8 threads busy on the CPU experts that shows
+    up as the "fast for a second, then a short freeze" stutter. Server-side per-token
+    time is flat (~40 ms), so the cost is purely rendering.
+    """
     st = {"thinking": False, "content": False}
+    buf = []
+    last = [0.0]
+
+    def flush(force=False):
+        if not buf:
+            return
+        now = time.monotonic()
+        if not force and now - last[0] < interval:
+            return
+        log.raw("".join(buf))
+        buf.clear()
+        last[0] = now
 
     def on_delta(kind, text):
         if kind == "thinking":
             st["content"] = False
             if hide_thinking:
                 if not st["thinking"]:
-                    log.raw("\n[thinking...]")
+                    buf.append("\n[thinking...]")
                     st["thinking"] = True
-                return
+                return flush()
             if not st["thinking"]:
-                log.raw("\n[thinking] ")
+                buf.append("\n[thinking] ")
                 st["thinking"] = True
-            log.raw(text)
         else:
             st["thinking"] = False
             if not st["content"]:
-                log.raw("\n\n[answer] ")
+                buf.append("\n\n[answer] ")
                 st["content"] = True
-            log.raw(text)
+        buf.append(text)
+        flush()
 
     on_delta.streamed = st
+    on_delta.flush = lambda: flush(True)
     return on_delta
 
 

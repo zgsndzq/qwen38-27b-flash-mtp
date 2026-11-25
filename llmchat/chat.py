@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import memory
+import recall
 import session as sess
 from log import log, setup as log_setup
 from client import ChatRequest, Client
@@ -53,6 +54,10 @@ OPTIONS = (
     ("mem", ("--mem",),
      {"choices": ("0", "1", "2", "3"), "default": "0",
       "help": "inject mem/ on the first turn: 1 text, 2 images, 3 both, 0 off"}),
+    ("recall", ("--recall",),
+     {"choices": ("on", "off"), "default": "off",
+      "help": "prepend a directly-written skill block when the query matches "
+              "(client-side experiment, off by default)"}),
     ("mem_scope", ("--mem-scope",),
      {"default": None, "metavar": "GROUP",
       "help": "which shelf under mem/ to use ('all' = the whole directory)"}),
@@ -345,6 +350,8 @@ class Chat:
         """Send one message. False means the server was unreachable."""
         msg = {"role": "user", "content": self.content(user)}
         sent = self.messages + [msg]
+        if self.a.recall == "on":
+            sent = recall.apply(sent, user)
         restored = self.restore()
         req = ChatRequest(sent, temperature=self.a.temp, max_tokens=self.a.max_tokens,
                           think=self.think, effort=self.a.effort)

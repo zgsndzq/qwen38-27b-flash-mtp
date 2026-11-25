@@ -146,6 +146,10 @@ class Client:
         except Exception as e:
             raise ConnectionError(
                 f"llama-server call failed ({self.base_url}): {e}{self._hint(e)}") from e
+        finally:
+            # the printer coalesces deltas; the tail must not stay in its buffer
+            if on_delta is not None and hasattr(on_delta, "flush"):
+                on_delta.flush()
         return "".join(reasoning), "".join(content), (timings or {})
 
     @staticmethod

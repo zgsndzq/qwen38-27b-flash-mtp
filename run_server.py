@@ -18,6 +18,8 @@ import sys
 import time
 from pathlib import Path
 
+from free_port import free_port
+
 HERE = Path(__file__).resolve().parent
 WIN = os.name == "nt"
 BIN = "llama-server.exe" if WIN else "llama-server"
@@ -85,11 +87,17 @@ def prepare_env(server_dir):
         (os.pathsep).join(parts + ([path] if path else []))
 
 
-def kill_stale():
-    """A leftover instance holds the port and its VRAM."""
+def kill_stale(port):
+    """The port comes first: whoever holds it goes down before we bind.
+
+    A stray server on another port still holds VRAM, so the old name sweep stays
+    as a second pass. Returns False when the port could not be freed.
+    """
+    freed = free_port(port)
     cmd = ["taskkill", "/F", "/IM", BIN] if WIN else ["pkill", "-f", "llama-server"]
     subprocess.call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(2)
+    time.sleep(1)
+    return freed
 
 
 def build_args(c, server_dir):
@@ -98,7 +106,7 @@ def build_args(c, server_dir):
     Required: model host port ctx batch threads ngl parallel flash_attn ctk ctv
               alias features_file features_section draft_n ngram_n_{match,min,max}
     Optional: cells thinking effort reasoning_budget reasoning_budget_message
-              vision mmproj image_min_tokens log_file bench kill_stale
+              vision mmproj image_min_tokens memory log_file bench kill_stale
               debug   logs/perf.csv is always written (D line per decode, A line
                       per speculative accept), newest 1000 records. true = every
                       trace, adds mmfa.log and no record cap; a dict overrides
@@ -141,6 +149,25 @@ def build_args(c, server_dir):
     mmproj = HERE / c["mmproj"] if c.get("mmproj") else None
     if c.get("vision") and mmproj is not None and mmproj.exists():
         args += ["--mmproj", str(mmproj), "--image-min-tokens", str(c["image_min_tokens"])]
+    # memory layer (fork): only when the profile names a database
+    mem = c.get("memory")
+    if mem:
+        for p in mem.get("paths", []):
+            args += ["--memory", str(HERE / p)]
+        args += ["--mem-encoder", str(HERE / mem["encoder"])]
+        for key, flag in (("threshold", "--mem-threshold"), ("margin", "--mem-margin"), ("top_k", "--mem-topk"),
+                          ("budget", "--mem-budget"), ("mode", "--mem-mode"),
+                          ("rerank", "--mem-rerank")):
+            if key in mem:
+                args += [flag, str(mem[key])]
+        # writable memory (fork): journal + idle dreaming, gated by features.ini
+        dream = mem.get("dream")
+        if dream:
+            for key, flag in (("dir", "--mem-dream-dir"), ("card", "--mem-dream-card"),
+                              ("days", "--mem-dream-days"), ("idle_s", "--mem-dream-idle"),
+                              ("max_tokens", "--mem-dream-tokens")):
+                if key in dream:
+                    args += [flag, str(dream[key])]
     return args
 
 
@@ -178,7 +205,11 @@ def main():
         return 1
     prepare_env(server_dir)
     if c.get("cells"):
-        os.environ["GGML_CUDA_FA_CHUNK"] = str(c["cells"])
+        # An explicit GGML_CUDA_FA_CHUNK wins; otherwise the profile can pin the chunk
+        # size with "fa_chunk" (0 = off) while keeping --kv-vram-cells at cells.
+        os.environ["GGML_CUDA_FA_CHUNK"] = (
+            os.environ.get("GGML_CUDA_FA_CHUNK")
+            or str(c.get("fa_chunk", c["cells"])))
     # perf.csv is always written; "debug": true = every trace, a dict overrides single
     # keys, "debug": false = nothing at all
     dbg = c.get("debug")
@@ -199,7 +230,10 @@ def main():
     if c.get("log_file"):
         (HERE / "logs").mkdir(parents=True, exist_ok=True)
     if c.get("kill_stale", True):
-        kill_stale()
+        if not kill_stale(c["port"]):
+            print("[error] port %d is still held; stop that process and retry" % c["port"],
+                  file=sys.stderr)
+            return 1
     return subprocess.call(args)
 
 

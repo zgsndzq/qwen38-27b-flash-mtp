@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 
 rem Config file to load. A file named on the command line wins.
-set "CONFIG=server-q40.json"
+set "CONFIG=server.json"
 rem PY: full path if 'python' is not on PATH
 set "PY=python"
 

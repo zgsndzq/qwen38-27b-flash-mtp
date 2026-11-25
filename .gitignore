@@ -27,3 +27,6 @@ llmchat/data/
 
 # 个人记忆（参考图与约定），换人换模型就该换，不进仓
 llmchat/mem/
+
+# 本机实验配置（含本机绝对路径），不进仓
+server-wk.json

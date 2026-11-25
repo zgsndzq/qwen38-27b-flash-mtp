@@ -21,10 +21,14 @@ OUT_DIR = ROOT.parent / "release"
 
 # 顶层文件与目录：整棵打进去
 TOP_FILES = ["LICENSE", "NOTICE", "README.md", "README.en.md",
-             "MAINTAINERS.md", "MAINTAINERS.en.md", "features.ini", "llmserver.bat"]
+             "MAINTAINERS.md", "MAINTAINERS.en.md", "features.ini",
+             "llmserver.bat", "llmserver_v2.bat", "llmserver-mem.bat", "llmserver.sh",
+             "run_server.py", "free_port.py",
+             "server.json", "server-v2.json", "server.mem.json"]
 TOP_DIRS = ["maps", "llmchat", "tools", "build"]
-# build/ 里只要这两块：bin 是 exe+dll，cuda 是随包带的 CUDA 运行时
-BUILD_KEEP = ["build/bin", "build/cuda"]
+# build/ 里只要这两块：src/bin 是最新编译产物（find_server() 优先它），
+# cuda 是随包带的 CUDA 运行时。build/bin 是旧的静态副本，不要再打进去。
+BUILD_KEEP = ["build/src/bin", "build/cuda"]
 SKIP_DIRS = {".git", "__pycache__", "logs", ".workbuddy", "weights"}
 SKIP_SUFFIX = (".pyc", ".log", ".gguf")
 # weights 只带说明，不带权重本身

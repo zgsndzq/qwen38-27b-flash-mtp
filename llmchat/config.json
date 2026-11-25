@@ -5,6 +5,7 @@
   "slot_grow": 2048,
   "think": "on",
   "effort": "low",
+  "recall": "off",
   "temp": 0.6,
   "max_tokens": null,
   "sys_file": "",
